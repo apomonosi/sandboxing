@@ -68,6 +68,13 @@ func (p *Provider) PreviewDelete(name string, force bool) []provider.Command {
 	return []provider.Command{cmd(buildDeleteArgs(name, force))}
 }
 
+// PreviewExec and PreviewShell show only the terminal command — not the
+// bounded, invisible incus-agent readiness wait the real Exec/Shell
+// methods do first (see waitForAgent in incus.go). That wait is a retry
+// loop of unknown length depending on the guest's current boot state,
+// not a fixed command sequence, so there's nothing deterministic to show
+// for it here; the command below is what actually runs once the agent
+// responds.
 func (p *Provider) PreviewExec(name string, opts provider.ExecOptions) []provider.Command {
 	return []provider.Command{cmd(buildExecArgs(name, opts.Command))}
 }

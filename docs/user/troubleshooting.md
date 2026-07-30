@@ -51,6 +51,21 @@ on an instance created by an older `agentctl` build, fix it directly:
 `incus config set <name> security.secureboot=false`, then `agentctl start`
 again.
 
+## `shell`/`exec` say "Error: VM agent isn't currently running"
+
+`agentctl shell`/`agentctl exec` need the in-guest `incus-agent` to have
+connected, which normally happens within a few seconds of `start` but can
+take longer depending on the image and hardware. `shell`/`exec` already
+wait up to 30 seconds for it, printing "waiting for the VM agent... to
+start" to stderr if it takes a moment — you shouldn't need to do anything
+but wait.
+
+If it still fails after 30 seconds, either the guest is taking unusually
+long to boot (just retry `agentctl shell`/`exec` again), or the image
+doesn't include incus-agent support at all (some minimal or custom images
+don't) — in which case `exec`/`shell` won't work on that image, but
+`agentctl view` (the console) still will, since it doesn't need the agent.
+
 ## An `--allow` entry stopped working after a while
 
 Domain-based allow rules are resolved to IP addresses when the policy is
