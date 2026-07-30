@@ -31,12 +31,19 @@ func newExecCmd() *cobra.Command {
 				return err
 			}
 
-			exitCode, err := p.Exec(cmd.Context(), name, provider.ExecOptions{
+			execOpts := provider.ExecOptions{
 				Command: command,
 				Stdin:   cmd.InOrStdin(),
 				Stdout:  cmd.OutOrStdout(),
 				Stderr:  cmd.ErrOrStderr(),
-			})
+			}
+			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+				return pv.PreviewExec(name, execOpts)
+			}); handled {
+				return err
+			}
+
+			exitCode, err := p.Exec(cmd.Context(), name, execOpts)
 			if err != nil {
 				return err
 			}

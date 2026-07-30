@@ -14,6 +14,11 @@ func shellRunE(cmd *cobra.Command, args []string) error {
 	if err := gateOrBlock(cmd.OutOrStdout(), providerName, p.Capabilities().Get(provider.FeatureShell), forcePartial(cmd)); err != nil {
 		return err
 	}
+	if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+		return pv.PreviewShell(args[0])
+	}); handled {
+		return err
+	}
 	return p.Shell(cmd.Context(), args[0], provider.ShellOptions{
 		Stdin:  cmd.InOrStdin(),
 		Stdout: cmd.OutOrStdout(),

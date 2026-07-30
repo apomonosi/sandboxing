@@ -54,6 +54,17 @@ $ agentctl stop my-agent
 $ agentctl delete my-agent
 ```
 
+## See exactly what a command would do, before it does it
+
+```console
+$ agentctl --preview create my-agent --image=images:ubuntu/24.04 --profile=default
+incus init images:ubuntu/24.04 my-agent --vm -p default -c limits.cpu=2 -c limits.memory=4GiB
+...
+```
+
+Nothing runs — this just prints the underlying `incus` commands. See
+[Preview Mode](preview-mode.md).
+
 ## One-shot commands without a full shell
 
 ```console

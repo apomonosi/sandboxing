@@ -19,6 +19,11 @@ func newStartCmd() *cobra.Command {
 			if err := gateOrBlock(cmd.OutOrStdout(), providerName, p.Capabilities().Get(provider.FeatureStart), forcePartial(cmd)); err != nil {
 				return err
 			}
+			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+				return pv.PreviewStart(args[0])
+			}); handled {
+				return err
+			}
 			return p.Start(cmd.Context(), args[0])
 		},
 	}

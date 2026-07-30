@@ -114,6 +114,13 @@ func newCreateCmd() *cobra.Command {
 			}
 
 			instSpec := spec.ToInstanceSpec(name, resolvedImage, profileNames, policy)
+
+			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+				return pv.PreviewCreate(instSpec)
+			}); handled {
+				return err
+			}
+
 			inst, err := p.Create(cmd.Context(), instSpec)
 			if err != nil {
 				return err

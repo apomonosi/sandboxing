@@ -56,6 +56,8 @@ so explicitly instead of failing with a raw error — see
 	root.PersistentFlags().String("output", "table", "output format: table|json")
 	root.PersistentFlags().Bool("force-partial", false, "proceed past a manual-workaround capability gap, accepting reduced protection")
 	root.PersistentFlags().String("profile-dir", "", "override the configured org-distributed profile directory")
+	root.PersistentFlags().Bool("preview", false, "print the backend command(s) this would run instead of running them")
+	root.PersistentFlags().Bool("dry-run", false, "alias of --preview")
 
 	root.AddCommand(
 		newCreateCmd(),

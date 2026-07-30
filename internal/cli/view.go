@@ -26,7 +26,13 @@ docs/user/view-and-console.md for the full rationale.`,
 			if err := gateOrBlock(cmd.OutOrStdout(), providerName, p.Capabilities().Get(provider.FeatureView), forcePartial(cmd)); err != nil {
 				return err
 			}
-			return p.View(cmd.Context(), args[0], provider.ViewOptions{ReadOnly: readOnly})
+			viewOpts := provider.ViewOptions{ReadOnly: readOnly}
+			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+				return pv.PreviewView(args[0], viewOpts)
+			}); handled {
+				return err
+			}
+			return p.View(cmd.Context(), args[0], viewOpts)
 		},
 	}
 	cmd.Flags().BoolVar(&readOnly, "read-only", false, "open the viewer in read-only mode if the provider supports it")

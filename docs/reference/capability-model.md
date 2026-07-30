@@ -79,10 +79,58 @@ exit codes are defined, so every command's behavior is consistent and the
 whole thing is testable without Cobra or a real provider — see
 `internal/cli/capability_gate_test.go`.
 
+## Preview and drift
+
+`internal/provider/preview.go` defines an optional second interface:
+
+```go
+type Command struct {
+    Binary string
+    Args   []string
+}
+func (c Command) String() string // shell-quoted, copy-pasteable
+
+type CommandPreviewer interface {
+    PreviewCreate(spec InstanceSpec) []Command
+    PreviewStart(name string) []Command
+    PreviewStop(name string, opts StopOptions) []Command
+    PreviewDelete(name string, force bool) []Command
+    PreviewExec(name string, opts ExecOptions) []Command
+    PreviewShell(name string) []Command
+    PreviewView(name string, opts ViewOptions) []Command
+    PreviewImagePull(ref string) []Command
+}
+```
+
+A provider implements this only if it has real commands to show — Lima and
+Hyper-V don't yet, since they're stubs, so they simply don't implement it.
+Nothing special has to happen for that case: `internal/cli`'s `tryPreview`
+helper is only ever reached *after* the capability gate has already let the
+operation through, and on Lima/Hyper-V today the gate itself blocks with
+`UnderDevelopment` first — so `--preview` naturally has nothing to show
+there without any provider-specific handling.
+
+**The one thing this design is built to guarantee: preview output cannot
+drift from what actually executes.** `internal/provider/incus/translate.go`
+holds one argument-construction function per operation (`buildStartArgs`,
+`buildStopArgs`, `buildExecArgs`, ...); both the real `Provider` methods in
+`incus.go` and the `Preview*` methods in `preview.go` call the *same*
+function. There is no second, hand-maintained copy of "what the command
+looks like" that the preview path could quietly fall out of sync with —
+`internal/provider/incus/incus_test.go`'s
+`TestRealDispatch_MatchesPreview` asserts exactly this, by running each
+real method against a fake runner and checking the recorded invocation
+against the corresponding `Preview*` output.
+
 ## Extending it
 
 Adding a new provider is: implement the `Provider` interface, build a
 complete `capability.Table` covering every `Feature` in `AllFeatures`
 (honestly categorizing each gap per the two kinds above), and register a
 `Factory` for it in `cmd/agentctl/main.go`. Nothing in `internal/cli` needs
-to change.
+to change. Also implement `CommandPreviewer` if the provider shells out to
+real commands (as opposed to an SDK/API client) — it's optional, but it's
+what gives users of that backend the transparency `--preview` promises, and
+following the pattern above (one builder function per operation, called by
+both the real method and its `Preview*` counterpart) is what keeps it
+trustworthy.

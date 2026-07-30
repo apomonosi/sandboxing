@@ -31,6 +31,11 @@ func newImagePullCmd() *cobra.Command {
 			if err := gateOrBlock(cmd.OutOrStdout(), providerName, p.Capabilities().Get(provider.FeatureImagePull), forcePartial(cmd)); err != nil {
 				return err
 			}
+			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+				return pv.PreviewImagePull(args[0])
+			}); handled {
+				return err
+			}
 			return p.ImagePull(cmd.Context(), args[0])
 		},
 	}
