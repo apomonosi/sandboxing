@@ -1,0 +1,45 @@
+site_name: agentctl
+site_description: Hardened, ephemeral sandboxes for running AI agents safely
+repo_url: https://github.com/apomonosi/sandboxing
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - Installation: user/installation.md
+      - Quickstart: user/quickstart.md
+      - CLI Reference: user/cli-reference.md
+      - Authoring Profiles & Policies: user/profiles-and-policies.md
+      - Viewing a Sandbox: user/view-and-console.md
+      - Troubleshooting: user/troubleshooting.md
+  - Admin Guide:
+      - Deployment Model: admin/deployment-model.md
+      - Provider Setup:
+          - Incus (Linux): admin/providers/incus-setup.md
+          - Lima (macOS): admin/providers/lima-setup.md
+          - Hyper-V (Windows): admin/providers/hyperv-setup.md
+      - Distributing Profiles Org-Wide: admin/distributing-profiles.md
+      - Capability Matrix: admin/capability-matrix.md
+      - Security & Threat Model: admin/security-model.md
+  - Reference:
+      - Profile Schema: reference/profile-schema.md
+      - Capability Model (internals): reference/capability-model.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.superfences

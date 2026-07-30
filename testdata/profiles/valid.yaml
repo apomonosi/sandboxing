@@ -1,0 +1,25 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: valid
+  description: "A well-formed test fixture."
+spec:
+  network:
+    denyLAN: true
+    allow:
+      - domain: "example.com"
+        ports: [443]
+    ports:
+      - host: 8080
+        guest: 80
+        protocol: tcp
+  resources:
+    cpuCores: 2
+    memory: "4GiB"
+    diskSize: "20GiB"
+  mounts:
+    - hostPath: "~/workspaces/{{.Name}}"
+      guestPath: "/workspace"
+      readOnly: false
+  console:
+    viewer: "spice"

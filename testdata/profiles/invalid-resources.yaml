@@ -1,0 +1,10 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: invalid-resources
+spec:
+  network:
+    denyLAN: true
+  resources:
+    cpuCores: -1
+    memory: "not-a-size"

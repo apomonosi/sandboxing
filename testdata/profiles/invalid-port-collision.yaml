@@ -1,0 +1,14 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: invalid-port-collision
+spec:
+  network:
+    denyLAN: true
+    ports:
+      - host: 8080
+        guest: 80
+        protocol: tcp
+      - host: 8080
+        guest: 81
+        protocol: tcp

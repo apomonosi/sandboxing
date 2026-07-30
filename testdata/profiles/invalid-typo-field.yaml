@@ -1,0 +1,8 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: invalid-typo-field
+spec:
+  network:
+    denyLan: true
+    allow: []

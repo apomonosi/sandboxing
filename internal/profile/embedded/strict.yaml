@@ -1,0 +1,23 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: strict
+  description: >-
+    No egress allowlist entries at all: default-deny with LAN blocked and
+    nothing pre-approved. Start here for a maximally isolated sandbox and
+    add --allow entries only as needed for the task at hand.
+spec:
+  network:
+    denyLAN: true
+    allow: []
+    ports: []
+  resources:
+    cpuCores: 1
+    memory: "2GiB"
+    diskSize: "10GiB"
+  mounts:
+    - hostPath: "~/agentctl/workspaces/{{.Name}}"
+      guestPath: "/workspace"
+      readOnly: false
+  console:
+    viewer: "spice"
