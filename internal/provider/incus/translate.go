@@ -28,6 +28,61 @@ func aclName(instanceName string) string {
 	return "agentctl-" + instanceName
 }
 
+// buildStartArgs, buildStopArgs, buildDeleteArgs, buildExecArgs,
+// buildShellArgs, buildViewArgs, and buildImagePullArgs mirror
+// buildInitArgs below: each is the single source of truth for one
+// operation's `incus` invocation, called by both the real Provider method
+// (incus.go) and its CommandPreviewer counterpart (preview.go) so preview
+// output can never drift from what actually executes.
+
+func buildStartArgs(name string) []string {
+	return []string{"start", name}
+}
+
+func buildStopArgs(name string, opts provider.StopOptions) []string {
+	args := []string{"stop", name}
+	if opts.Force {
+		args = append(args, "--force")
+	}
+	if opts.Timeout > 0 {
+		args = append(args, "--timeout", fmt.Sprintf("%d", int(opts.Timeout.Seconds())))
+	}
+	return args
+}
+
+func buildDeleteArgs(name string, force bool) []string {
+	args := []string{"delete", name}
+	if force {
+		args = append(args, "--force")
+	}
+	return args
+}
+
+func buildExecArgs(name string, command []string) []string {
+	return append([]string{"exec", name, "--"}, command...)
+}
+
+func buildShellArgs(name string) []string {
+	return []string{"exec", name, "--", "/bin/bash"}
+}
+
+// buildViewArgs returns the args for Incus's native SPICE console —
+// never the guest's X server, see docs/user/view-and-console.md.
+func buildViewArgs(name string) []string {
+	return []string{"console", name, "--type=vga"}
+}
+
+func buildImagePullArgs(ref string) []string {
+	return []string{"image", "copy", ref, "local:"}
+}
+
+// buildACLDeleteArgs returns the best-effort cleanup command run before
+// (re-)applying a network policy; its errors are ignored by the real
+// ApplyNetworkPolicy since the ACL may not exist yet on a first apply.
+func buildACLDeleteArgs(instanceName string) []string {
+	return []string{"network", "acl", "delete", aclName(instanceName)}
+}
+
 // buildInitArgs returns the argument list for `incus init`, translating
 // spec into instance type, profiles, and resource-limit config keys.
 // Mounts and network policy are applied as separate follow-up commands

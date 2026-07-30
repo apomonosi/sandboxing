@@ -24,10 +24,16 @@ func newStopCmd() *cobra.Command {
 			if err := gateOrBlock(cmd.OutOrStdout(), providerName, p.Capabilities().Get(provider.FeatureStop), forcePartial(cmd)); err != nil {
 				return err
 			}
-			return p.Stop(cmd.Context(), args[0], provider.StopOptions{
+			opts := provider.StopOptions{
 				Force:   force,
 				Timeout: time.Duration(timeoutSeconds) * time.Second,
-			})
+			}
+			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+				return pv.PreviewStop(args[0], opts)
+			}); handled {
+				return err
+			}
+			return p.Stop(cmd.Context(), args[0], opts)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "force stop without a graceful shutdown")

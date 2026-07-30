@@ -21,6 +21,11 @@ func newDeleteCmd() *cobra.Command {
 			if err := gateOrBlock(cmd.OutOrStdout(), providerName, p.Capabilities().Get(provider.FeatureDelete), forcePartial(cmd)); err != nil {
 				return err
 			}
+			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
+				return pv.PreviewDelete(args[0], force)
+			}); handled {
+				return err
+			}
 			return p.Delete(cmd.Context(), args[0], force)
 		},
 	}

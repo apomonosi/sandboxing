@@ -44,6 +44,16 @@ See [Capability Model](reference/capability-model.md) for how this works
 internally, and the [Troubleshooting](user/troubleshooting.md) guide for what
 each response looks like in practice.
 
+## Transparent by design
+
+Every command that touches the backend supports `--preview`/`--dry-run`,
+which prints the exact `incus`/`limactl`/PowerShell command(s) agentctl
+would run instead of running them. This isn't just a debugging aid — it's
+meant to build confidence in the tool by letting you verify what it
+actually does, and it means you don't strictly need to install agentctl
+anywhere you don't want to: preview the commands elsewhere, then copy and
+run them directly. See [Preview Mode](user/preview-mode.md).
+
 ## Where to start
 
 - New user? Go to [Installation](user/installation.md) then [Quickstart](user/quickstart.md).

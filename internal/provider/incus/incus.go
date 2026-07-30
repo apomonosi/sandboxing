@@ -83,28 +83,17 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 }
 
 func (p *Provider) Start(ctx context.Context, name string) error {
-	_, _, err := p.run(ctx, "start", name)
+	_, _, err := p.run(ctx, buildStartArgs(name)...)
 	return err
 }
 
 func (p *Provider) Stop(ctx context.Context, name string, opts provider.StopOptions) error {
-	args := []string{"stop", name}
-	if opts.Force {
-		args = append(args, "--force")
-	}
-	if opts.Timeout > 0 {
-		args = append(args, "--timeout", fmt.Sprintf("%d", int(opts.Timeout.Seconds())))
-	}
-	_, _, err := p.run(ctx, args...)
+	_, _, err := p.run(ctx, buildStopArgs(name, opts)...)
 	return err
 }
 
 func (p *Provider) Delete(ctx context.Context, name string, force bool) error {
-	args := []string{"delete", name}
-	if force {
-		args = append(args, "--force")
-	}
-	_, _, err := p.run(ctx, args...)
+	_, _, err := p.run(ctx, buildDeleteArgs(name, force)...)
 	return err
 }
 
@@ -141,12 +130,11 @@ func (p *Provider) Status(ctx context.Context, name string) (*provider.Instance,
 }
 
 func (p *Provider) Exec(ctx context.Context, name string, opts provider.ExecOptions) (int, error) {
-	args := append([]string{"exec", name, "--"}, opts.Command...)
-	return p.runner.RunStream(ctx, binary, args, opts.Stdin, opts.Stdout, opts.Stderr)
+	return p.runner.RunStream(ctx, binary, buildExecArgs(name, opts.Command), opts.Stdin, opts.Stdout, opts.Stderr)
 }
 
 func (p *Provider) Shell(ctx context.Context, name string, opts provider.ShellOptions) error {
-	_, err := p.runner.RunStream(ctx, binary, []string{"exec", name, "--", "/bin/bash"}, opts.Stdin, opts.Stdout, opts.Stderr)
+	_, err := p.runner.RunStream(ctx, binary, buildShellArgs(name), opts.Stdin, opts.Stdout, opts.Stderr)
 	return err
 }
 
@@ -154,9 +142,8 @@ func (p *Provider) Shell(ctx context.Context, name string, opts provider.ShellOp
 // display, never the guest's X server — see docs/user/view-and-console.md
 // for why raw X11 forwarding is deliberately excluded from agentctl.
 func (p *Provider) View(ctx context.Context, name string, opts provider.ViewOptions) error {
-	args := []string{"console", name, "--type=vga"}
 	var stdout, stderr bytes.Buffer
-	_, err := p.runner.RunStream(ctx, binary, args, nil, &stdout, &stderr)
+	_, err := p.runner.RunStream(ctx, binary, buildViewArgs(name), nil, &stdout, &stderr)
 	return err
 }
 
@@ -202,7 +189,7 @@ func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy p
 	resolved := resolveAllowRules(policy.Allow)
 	// Best-effort cleanup of a previous ACL from an earlier apply; ignore
 	// errors since it may not exist yet.
-	_, _, _ = p.run(ctx, "network", "acl", "delete", aclName(name))
+	_, _, _ = p.run(ctx, buildACLDeleteArgs(name)...)
 	for _, args := range networkACLCommands(name, policy, resolved) {
 		if _, _, err := p.run(ctx, args...); err != nil {
 			return err
@@ -230,7 +217,7 @@ func resolveAllowRules(rules []provider.AllowRule) map[string][]string {
 }
 
 func (p *Provider) ImagePull(ctx context.Context, ref string) error {
-	_, _, err := p.run(ctx, "image", "copy", ref, "local:")
+	_, _, err := p.run(ctx, buildImagePullArgs(ref)...)
 	return err
 }
 

@@ -24,6 +24,7 @@ structured capability-gate outcomes (`status`, `feature`, `message`, `plan`,
 | `--output <table\|json>` | Output format (default `table`) |
 | `--profile-dir <path>` | Override the configured org-distributed profile directory |
 | `--force-partial` | Proceed past a `ManualWorkaround` capability gap, accepting reduced protection |
+| `--preview` / `--dry-run` | Print the backend command(s) this would run, instead of running them — see [Preview Mode](preview-mode.md) |
 
 ## Lifecycle
 
@@ -41,9 +42,11 @@ Creates an instance without starting it.
 | `--port <host:guest[/proto]>` | Publish a port (repeatable) |
 | `--cpu-cores`, `--memory`, `--disk-size` | Resource overrides |
 
+Supports `--preview`/`--dry-run` (see [Preview Mode](preview-mode.md)).
+
 ### `agentctl start <name>` / `agentctl stop <name> [--force] [--timeout <secs>]` / `agentctl delete <name> [--force]`
 
-Standard lifecycle transitions.
+Standard lifecycle transitions. All three support `--preview`/`--dry-run`.
 
 ### `agentctl list` (alias `ls`) / `agentctl status <name>`
 
@@ -57,23 +60,23 @@ created time).
 Opens an interactive session. (`login` also works, as a hidden alias, for
 anyone used to that verb from an earlier design — but `shell` is the
 documented name, since "login" implies credential auth against a remote
-account, which this isn't.)
+account, which this isn't.) Supports `--preview`/`--dry-run`.
 
 ### `agentctl exec <name> -- <command...>`
 
-Runs one command and exits with its exit code.
+Runs one command and exits with its exit code. Supports `--preview`/`--dry-run`.
 
 ### `agentctl view <name> [--read-only]`
 
 Opens a console/display viewer. See [Viewing a Sandbox](view-and-console.md)
-for why this never does raw X11 forwarding.
+for why this never does raw X11 forwarding. Supports `--preview`/`--dry-run`.
 
 ## Images
 
 ### `agentctl image pull <ref>` / `agentctl image build <output-name> --base <ref> [--package <name>]...`
 
 Pull a pre-baked image, or build one just-in-time from a base image plus a
-cloud-init package list.
+cloud-init package list. `pull` supports `--preview`/`--dry-run`.
 
 ## Profiles
 

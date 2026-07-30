@@ -43,6 +43,21 @@ feature natively (New-VM/Start-VM, Extended Port ACLs, Standard/Production
 checkpoints, VMConnect for Hyper-V; create/start/stop and port forwarding for
 Lima) — agentctl just hasn't wired up the integration yet.
 
+## `--preview`/`--dry-run` availability
+
+`--preview` shows the backend command(s) an operation would run, built from
+the exact same code path the real dispatch uses (see
+[Capability Model](../reference/capability-model.md#preview-and-drift)).
+It only ever has something to show for an operation the active provider
+actually supports — the capability gate above always runs first. Today
+that means:
+
+| Provider | `--preview` |
+|---|---|
+| Incus | Live — every command in the table above that's `Supported` |
+| Lima | Nothing to preview yet (no operations are `Supported` yet) |
+| Hyper-V | Nothing to preview yet (no operations are `Supported` yet) |
+
 ## Where this comes from
 
 Run any command against an unsupported feature and agentctl prints the same

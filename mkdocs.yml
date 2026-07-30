@@ -24,6 +24,7 @@ nav:
       - Quickstart: user/quickstart.md
       - CLI Reference: user/cli-reference.md
       - Authoring Profiles & Policies: user/profiles-and-policies.md
+      - Preview Mode (--preview / --dry-run): user/preview-mode.md
       - Viewing a Sandbox: user/view-and-console.md
       - Troubleshooting: user/troubleshooting.md
   - Admin Guide:
