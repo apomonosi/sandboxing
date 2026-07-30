@@ -58,7 +58,7 @@ $ agentctl delete my-agent
 
 ```console
 $ agentctl --preview create my-agent --image=images:ubuntu/24.04 --profile=default
-incus init images:ubuntu/24.04 my-agent --vm -p default -c limits.cpu=2 -c limits.memory=4GiB
+incus init images:ubuntu/24.04 my-agent --vm -c security.secureboot=false -p default -c limits.cpu=2 -c limits.memory=4GiB
 ...
 ```
 

@@ -89,8 +89,22 @@ func buildACLDeleteArgs(instanceName string) []string {
 // (see incus.go's Create) rather than folded in here, since ACL creation
 // needs the instance to exist first and both are independently useful to
 // unit-test in isolation.
+//
+// security.secureboot=false is set unconditionally: Incus VMs default to
+// requiring UEFI Secure Boot, but most public/community images used with
+// agentctl (Alpine, generic Ubuntu cloud images, ...) aren't Secure Boot
+// signed, so the VM simply refuses to start with
+// "The image used by this instance is incompatible with secureboot"
+// otherwise (reported in practice on Incus 6.23 / Fedora 44). Secure Boot
+// protects a guest's own boot chain against tampering with its boot
+// media; it isn't part of the threat model agentctl defends against
+// (host escape and LAN lateral movement from a legitimately booted
+// guest), so disabling it doesn't weaken any of agentctl's actual
+// guarantees. An image that *is* Secure Boot signed can have it
+// re-enabled by hand afterward: `incus config set <name>
+// security.secureboot=true`.
 func buildInitArgs(spec provider.InstanceSpec) []string {
-	args := []string{spec.Image, spec.Name, "--vm"}
+	args := []string{spec.Image, spec.Name, "--vm", "-c", "security.secureboot=false"}
 	for _, p := range spec.Profiles {
 		args = append(args, "-p", p)
 	}

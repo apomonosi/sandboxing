@@ -39,13 +39,23 @@ this is already set up — it does not manage Incus permissions itself.
 - Network ACL support (native since early Incus 6.x; agentctl uses this for
   the egress allowlist/`--deny-lan` enforcement).
 
-## Known operational note
+## Known operational notes
 
-Incus 6.14 patched a bridge-network ACL isolation bypass that could let a
-compromised instance intercept traffic from other instances — exactly the
-attack class this project defends against. Keep Incus itself patched and
-current; `agentctl`'s guarantees are only as good as the backend enforcing
-them.
+- Incus 6.14 patched a bridge-network ACL isolation bypass that could let a
+  compromised instance intercept traffic from other instances — exactly the
+  attack class this project defends against. Keep Incus itself patched and
+  current; `agentctl`'s guarantees are only as good as the backend enforcing
+  them.
+- `agentctl create` always passes `-c security.secureboot=false`. Incus VMs
+  default to requiring UEFI Secure Boot, but most public/community images
+  (Alpine, generic Ubuntu cloud images, ...) aren't Secure Boot signed and
+  simply refuse to start otherwise. This doesn't weaken agentctl's actual
+  security guarantees — Secure Boot protects a guest's own boot chain
+  against tampering with its boot media, which is orthogonal to the
+  host-escape/LAN-lateral-movement threat model this project defends
+  against. If you're using an image that *is* Secure Boot signed and want
+  it enforced, re-enable it by hand after creation:
+  `incus config set <name> security.secureboot=true`.
 
 ## Verify
 
