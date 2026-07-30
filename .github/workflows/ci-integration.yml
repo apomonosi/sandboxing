@@ -1,0 +1,24 @@
+name: Incus Integration Tests
+
+# Real-Incus integration tests are slower and more environment-sensitive
+# than the unit suite (installing and initializing a daemon in CI), so
+# they run on a manual trigger / nightly schedule rather than blocking
+# every PR. See docs and internal/provider/incus/integration_test.go.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install and initialize Incus
+        run: bash scripts/ci-incus-setup.sh
+      - name: Run integration tests
+        run: |
+          sg incus-admin -c "AGENTCTL_INTEGRATION_INCUS=1 go test -tags=integration ./..."

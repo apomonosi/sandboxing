@@ -1,0 +1,10 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: invalid-port-range
+spec:
+  network:
+    denyLAN: true
+    allow:
+      - domain: "example.com"
+        ports: [70000]
