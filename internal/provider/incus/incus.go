@@ -13,11 +13,27 @@ import (
 	"io"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
 )
 
 const binary = "incus"
+
+// agentNotRunningMsg is the substring Incus includes in its error when
+// the in-guest incus-agent hasn't connected yet — most commonly right
+// after `start`, before the guest has finished booting and the agent has
+// had a chance to come up (reported in practice on Incus 6.23 / Fedora
+// 44 immediately following `agentctl start` then `agentctl shell`).
+const agentNotRunningMsg = "VM agent isn't currently running"
+
+// agentReadyTimeout and agentPollInterval bound how long Exec/Shell wait
+// for the agent before giving up. Package-level vars (not consts) so
+// tests can shrink them instead of waiting out a real 30s timeout.
+var (
+	agentReadyTimeout = 30 * time.Second
+	agentPollInterval = time.Second
+)
 
 type Provider struct {
 	runner       provider.Runner
@@ -130,12 +146,60 @@ func (p *Provider) Status(ctx context.Context, name string) (*provider.Instance,
 }
 
 func (p *Provider) Exec(ctx context.Context, name string, opts provider.ExecOptions) (int, error) {
+	if err := p.waitForAgent(ctx, name, opts.Stderr); err != nil {
+		return -1, err
+	}
 	return p.runner.RunStream(ctx, binary, buildExecArgs(name, opts.Command), opts.Stdin, opts.Stdout, opts.Stderr)
 }
 
 func (p *Provider) Shell(ctx context.Context, name string, opts provider.ShellOptions) error {
+	if err := p.waitForAgent(ctx, name, opts.Stderr); err != nil {
+		return err
+	}
 	_, err := p.runner.RunStream(ctx, binary, buildShellArgs(name), opts.Stdin, opts.Stdout, opts.Stderr)
 	return err
+}
+
+// waitForAgent blocks until the guest's incus-agent responds to a
+// harmless probe command (`incus exec <name> -- true`), or
+// agentReadyTimeout elapses. Only View's SPICE console and the
+// daemon-side commands (start/stop/list/...) work without the agent;
+// Exec and Shell both need it, since `incus exec` is itself the
+// agent-mediated channel.
+//
+// Any probe error other than "agent not running" is returned
+// immediately rather than retried, so a genuinely broken request (wrong
+// instance name, instance not running at all, ...) fails fast instead of
+// spinning for the full timeout. notify, if non-nil, gets a one-line
+// heads-up the first time the agent isn't ready yet, so a multi-second
+// wait doesn't look like agentctl hanging.
+func (p *Provider) waitForAgent(ctx context.Context, name string, notify io.Writer) error {
+	deadline := time.Now().Add(agentReadyTimeout)
+	notified := false
+	var lastErr error
+	for {
+		_, _, err := p.run(ctx, "exec", name, "--", "true")
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), agentNotRunningMsg) {
+			return err
+		}
+		lastErr = err
+		if !notified && notify != nil {
+			fmt.Fprintf(notify, "agentctl: waiting for the VM agent inside %q to start...\n", name)
+			notified = true
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("VM agent inside %q did not become ready within %s (the image may not include incus-agent support): %w",
+				name, agentReadyTimeout, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(agentPollInterval):
+		}
+	}
 }
 
 // View spawns Incus's native SPICE console against the instance's own
