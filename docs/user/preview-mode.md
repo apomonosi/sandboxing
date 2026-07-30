@@ -6,7 +6,7 @@ command(s) it would have run:
 
 ```console
 $ agentctl --preview create demo --image=images:ubuntu/24.04 --profile=default --port=8080:80
-incus init images:ubuntu/24.04 demo --vm -p default -c limits.cpu=2 -c limits.memory=4GiB
+incus init images:ubuntu/24.04 demo --vm -c security.secureboot=false -p default -c limits.cpu=2 -c limits.memory=4GiB
 incus config device override demo root size=20GiB
 incus config device add demo mount0 disk source=~/agentctl/workspaces/{{.Name}} path=/workspace
 incus config device add demo port0 proxy listen=tcp:0.0.0.0:8080 connect=tcp:127.0.0.1:80

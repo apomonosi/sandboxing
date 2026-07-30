@@ -38,6 +38,19 @@ link-local ranges specifically so a sandbox can't reach other devices on your
 network. If you genuinely need that, pass `--allow-lan` on `create`, or set
 `denyLAN: false` in a profile, understanding the tradeoff.
 
+## `start` fails with "incompatible with secureboot"
+
+```
+Error: The image used by this instance is incompatible with secureboot. Please set security.secureboot=false on the instance
+```
+
+This shouldn't happen on current `agentctl` — `create` disables Secure Boot
+by default precisely because most public/community images aren't signed for
+it (see [Incus setup](../admin/providers/incus-setup.md)). If you hit this
+on an instance created by an older `agentctl` build, fix it directly:
+`incus config set <name> security.secureboot=false`, then `agentctl start`
+again.
+
 ## An `--allow` entry stopped working after a while
 
 Domain-based allow rules are resolved to IP addresses when the policy is

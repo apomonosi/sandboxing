@@ -20,6 +20,7 @@ func TestBuildInitArgs(t *testing.T) {
 	got := buildInitArgs(spec)
 	want := []string{
 		"images:ubuntu/24.04", "demo", "--vm",
+		"-c", "security.secureboot=false",
 		"-p", "default", "-p", "extra",
 		"-c", "limits.cpu=2",
 		"-c", "limits.memory=4GiB",
@@ -27,6 +28,21 @@ func TestBuildInitArgs(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildInitArgs() = %v, want %v", got, want)
 	}
+}
+
+// TestBuildInitArgs_SecureBootDisabledByDefault is a regression test for a
+// real-world failure on Incus 6.23 (Fedora 44): "The image used by this
+// instance is incompatible with secureboot." Most public/community images
+// agentctl targets aren't Secure Boot signed, so it must be disabled by
+// default for the VM to boot at all.
+func TestBuildInitArgs_SecureBootDisabledByDefault(t *testing.T) {
+	args := buildInitArgs(provider.InstanceSpec{Name: "demo", Image: "images:alpine/edge"})
+	for _, a := range args {
+		if a == "security.secureboot=false" {
+			return
+		}
+	}
+	t.Errorf("buildInitArgs() = %v, want it to include \"security.secureboot=false\"", args)
 }
 
 func TestBuildRootDiskResizeArgs(t *testing.T) {
