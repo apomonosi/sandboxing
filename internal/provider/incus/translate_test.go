@@ -105,6 +105,29 @@ func TestNetworkACLCommands_DenyLANAndAllow(t *testing.T) {
 	}
 }
 
+// TestNetworkACLCommands_NoInvalidEgressActionKey is a regression test for
+// a real-world failure on Incus 6.23 (Fedora 44): an earlier version of
+// networkACLCommands issued `incus network acl set <acl> egress.action=reject`,
+// which fails with "Invalid config option \"egress.action\"" — there's no
+// such ACL-level config key. Default-deny for unmatched egress traffic
+// needs no explicit command at all: Incus already defaults
+// security.acls.default.egress.action to "reject" once an ACL is attached
+// to a NIC.
+func TestNetworkACLCommands_NoInvalidEgressActionKey(t *testing.T) {
+	policy := provider.NetworkPolicy{DenyLAN: true}
+	cmds := networkACLCommands("demo", policy, nil)
+	for _, c := range cmds {
+		if len(c) >= 4 && c[0] == "network" && c[1] == "acl" && c[2] == "set" {
+			t.Errorf("networkACLCommands must not emit an ACL-level `network acl set` command (no such config key exists), got: %v", c)
+		}
+		for _, arg := range c {
+			if arg == "egress.action=reject" {
+				t.Errorf("networkACLCommands must not emit the invalid egress.action ACL config key, got: %v", c)
+			}
+		}
+	}
+}
+
 func contains(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {

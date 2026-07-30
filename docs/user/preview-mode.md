@@ -12,7 +12,6 @@ incus config device add demo mount0 disk source=~/agentctl/workspaces/{{.Name}} 
 incus config device add demo port0 proxy listen=tcp:0.0.0.0:8080 connect=tcp:127.0.0.1:80
 incus network acl delete agentctl-demo
 incus network acl create agentctl-demo
-incus network acl set agentctl-demo egress.action=reject
 incus network acl rule add agentctl-demo egress action=reject destination=10.0.0.0/8
 incus network acl rule add agentctl-demo egress action=reject destination=172.16.0.0/12
 incus network acl rule add agentctl-demo egress action=reject destination=192.168.0.0/16
