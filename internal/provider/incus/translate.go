@@ -142,6 +142,16 @@ func buildPortProxyDeviceArgs(instanceName, deviceName string, pp provider.PortP
 // it to the instance's NIC, implementing default-deny egress with an
 // explicit allowlist and (if DenyLAN) an RFC1918/link-local block.
 //
+// Default-deny for unmatched egress traffic needs no explicit command:
+// Incus's own default for security.acls.default.egress.action is "reject"
+// the moment one or more ACLs are attached to a NIC via security.acls
+// (see the final "config device override" call below) — there is no
+// ACL-level config key for this (an earlier version of this code tried
+// `incus network acl set <acl> egress.action=reject`, which is invalid:
+// "egress.action" isn't a real ACL config option, only a NIC/network
+// setting, and an unnecessary one at that since reject is already the
+// default).
+//
 // Domain-based allow rules are resolved to IP addresses by the caller
 // (see incus.go's resolveAllowRules) before this function is called,
 // since Incus ACL rules match on IP/CIDR, not DNS names. This is a
@@ -155,7 +165,6 @@ func networkACLCommands(instanceName string, policy provider.NetworkPolicy, reso
 	var cmds [][]string
 
 	cmds = append(cmds, []string{"network", "acl", "create", acl})
-	cmds = append(cmds, []string{"network", "acl", "set", acl, "egress.action=reject"})
 
 	if policy.DenyLAN {
 		for _, cidr := range rfc1918AndLinkLocal {
