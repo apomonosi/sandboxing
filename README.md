@@ -4,8 +4,10 @@ Hardened, ephemeral sandboxes for running AI agents safely — on Linux
 (Incus), macOS (Lima), and Windows (Hyper-V), defending against both host
 escape and lateral attacks against other machines on the same network.
 
-Full documentation lives in [`docs/`](docs/index.md) (built with
-[MkDocs](https://www.mkdocs.org/)):
+Full documentation is published at
+[apomonosi.github.io/sandboxing](https://apomonosi.github.io/sandboxing/),
+built from [`docs/`](docs/index.md) with [MkDocs](https://www.mkdocs.org/).
+To build it locally:
 
 ```console
 $ pip install mkdocs mkdocs-material
