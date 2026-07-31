@@ -1,0 +1,49 @@
+name: Deploy docs
+
+# Builds the mkdocs site and publishes it to GitHub Pages at
+# https://apomonosi.github.io/sandboxing. Requires a one-time repo setting:
+# Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; don't cancel one that's in flight so
+# a deploy always finishes rather than being pre-empted mid-publish.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: pip install mkdocs mkdocs-material
+      - run: mkdocs build --strict
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
