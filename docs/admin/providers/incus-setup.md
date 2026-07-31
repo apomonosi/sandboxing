@@ -36,6 +36,15 @@ this is already set up — it does not manage Incus permissions itself.
 - A running, initialized Incus daemon reachable via the local `incus` CLI.
 - Enough storage/network configuration for `incus init --vm` to succeed
   (agentctl creates VMs, not containers, for the stronger isolation boundary).
+- **Working hardware virtualization (KVM).** Since agentctl always creates
+  VMs, the host needs `/dev/kvm` available — a real machine or a VM host
+  with nested virtualization enabled. This is why
+  `.github/workflows/ci-integration.yml` can't run on a standard
+  GitHub-hosted Actions runner: those have no nested virtualization, so
+  Incus fails immediately with "Instance type \"virtual-machine\" is not
+  supported on this server: QEMU command not available for CPU
+  architecture." That workflow needs to be pointed at a self-hosted or
+  nested-virt-capable runner.
 - Network ACL support (native since early Incus 6.x; agentctl uses this for
   the egress allowlist/`--deny-lan` enforcement).
 

@@ -2,15 +2,27 @@ name: Incus Integration Tests
 
 # Real-Incus integration tests are slower and more environment-sensitive
 # than the unit suite (installing and initializing a daemon in CI), so
-# they run on a manual trigger / nightly schedule rather than blocking
-# every PR. See docs and internal/provider/incus/integration_test.go.
+# they run on a manual trigger rather than blocking every PR. See docs
+# and internal/provider/incus/integration_test.go.
+#
+# IMPORTANT: this needs a KVM-capable runner. agentctl always creates
+# Incus VMs (`incus init ... --vm`), and standard GitHub-hosted runners
+# have no nested virtualization — Incus fails immediately with "Instance
+# type \"virtual-machine\" is not supported on this server: QEMU command
+# not available for CPU architecture". There's deliberately no `schedule:`
+# trigger here: a job that's structurally guaranteed to fail on the
+# default runner would just be nightly failure-notification noise. Run
+# this manually (workflow_dispatch) pointed at a self-hosted runner (or a
+# GitHub-hosted "larger runner" with nested virtualization enabled, where
+# available on your plan) that actually has KVM.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * *"
 
 jobs:
   integration:
+    # ubuntu-latest (a standard GitHub-hosted runner) has no KVM and will
+    # fail every VM creation — see the note above. Point this at a
+    # self-hosted or nested-virt-capable runner before running it.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
