@@ -66,9 +66,12 @@ func TestPreviewCreate_NoNetworkAllowRules(t *testing.T) {
 
 func TestPreviewCreate_MatchesRealCreateCommandSequence(t *testing.T) {
 	// The real Create() method issues init, then (optionally) disk
-	// resize, mounts, ports, then ApplyNetworkPolicy, then a trailing
-	// Status() query. PreviewCreate should match every step except that
-	// trailing query.
+	// resize, mounts, ports, then ApplyNetworkPolicy, then start +
+	// (invisible) waitForAgent + bootstrap + stop, then a trailing
+	// Status() query. PreviewCreate should match every step except the
+	// invisible agent-readiness probe (same category of gap as Exec/
+	// Shell's own preview — a retry loop of unknown length, not a fixed
+	// command) and the trailing query.
 	fr := &fakeRunner{}
 	p := NewWithRunner(fr).(*Provider)
 	spec := provider.InstanceSpec{
@@ -84,11 +87,25 @@ func TestPreviewCreate_MatchesRealCreateCommandSequence(t *testing.T) {
 	}
 
 	preview := p.PreviewCreate(spec)
-	if len(fr.calls) < len(preview) {
-		t.Fatalf("real Create issued %d commands, fewer than preview's %d", len(fr.calls), len(preview))
+	var realCalls [][]string
+	for _, c := range fr.calls {
+		if isAgentProbe(c[1:]) {
+			continue
+		}
+		// The config-set call recording the bootstrap script's real
+		// resulting UID isn't shown in preview either (see PreviewCreate's
+		// doc comment) — it only exists after actually running the
+		// mutating script, so it can't be previewed without lying.
+		if len(c) > 0 && strings.HasPrefix(c[len(c)-1], userConfigKey+"=") {
+			continue
+		}
+		realCalls = append(realCalls, c)
+	}
+	if len(realCalls) < len(preview) {
+		t.Fatalf("real Create issued %d commands (excluding the agent probe), fewer than preview's %d", len(realCalls), len(preview))
 	}
 	for i, want := range preview {
-		got := fr.calls[i]
+		got := realCalls[i]
 		wantArgs := append([]string{binary}, want.Args...)
 		if !reflect.DeepEqual(got, wantArgs) {
 			t.Errorf("call %d = %v, want %v", i, got, wantArgs)

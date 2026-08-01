@@ -22,15 +22,18 @@ func cmd(args []string) provider.Command {
 // PreviewCreate lists every command Create would run, in order: the
 // instance init, an optional root-disk resize, one device-add per mount
 // and per published port, the network-policy application sequence (see
-// previewNetworkPolicy), and finally the user-bootstrap invocation. It
-// deliberately does not include two things Create() also does: the
-// trailing `incus list` status query (a read, not part of "achieving the
-// sandbox goal"), and the `config set` call that records the bootstrap
-// script's resulting UID — that value only exists after actually running
-// the (mutating) bootstrap script, so it can't be shown without lying
-// about it; the invocation that pipes the script over stdin is shown
-// instead, same category of gap as Exec/Shell's invisible waitForAgent
-// retry loop.
+// previewNetworkPolicy), a start (incus exec requires a running instance),
+// the user-bootstrap invocation, and a forceful stop back down — Create()
+// starts the instance only long enough to provision the default user, then
+// stops it again so `create` keeps its documented "doesn't leave the
+// instance running" contract. It deliberately does not include three
+// things Create() also does: the invisible waitForAgent retry wait after
+// starting (a retry loop of unknown length, not a fixed command, same gap
+// as Exec/Shell's own preview), the trailing `incus list` status query (a
+// read, not part of "achieving the sandbox goal"), and the `config set`
+// call that records the bootstrap script's resulting UID — that value
+// only exists after actually running the (mutating) bootstrap script, so
+// it can't be shown without lying about it.
 func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command {
 	var cmds []provider.Command
 	cmds = append(cmds, cmd(append([]string{"init"}, buildInitArgs(spec)...)))
@@ -45,12 +48,14 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 		cmds = append(cmds, cmd(buildPortProxyDeviceArgs(spec.Name, fmt.Sprintf("port%d", i), pp)))
 	}
 	cmds = append(cmds, p.previewNetworkPolicy(spec.Name, spec.Overrides)...)
+	cmds = append(cmds, cmd(buildStartArgs(spec.Name)))
 
 	username := spec.DefaultUser
 	if username == "" {
 		username = defaultUsername
 	}
 	cmds = append(cmds, cmd(buildExecArgs(spec.Name, bootstrapUserCommand(username), nil)))
+	cmds = append(cmds, cmd(buildStopArgs(spec.Name, provider.StopOptions{Force: true})))
 
 	return cmds
 }
