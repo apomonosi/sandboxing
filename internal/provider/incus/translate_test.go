@@ -121,6 +121,40 @@ func TestNetworkACLCommands_DenyLANAndAllow(t *testing.T) {
 	}
 }
 
+// TestNetworkACLCommands_DedupesIdenticalRules is a regression test for a
+// real-world failure reported against `create --agent=claude`: claude.ai
+// and *.anthropic.com (both merged into the allowlist by --agent) resolved
+// to the same IP behind shared CDN infrastructure, producing two
+// byte-identical `acl rule add ... destination=<ip> ... destination_port=443`
+// invocations. Incus rejects the second with "Duplicate of egress rule N",
+// failing the whole apply. Two rules for the same IP but different ports
+// must still both survive — only exact duplicates are dropped.
+func TestNetworkACLCommands_DedupesIdenticalRules(t *testing.T) {
+	policy := provider.NetworkPolicy{
+		Allow: []provider.AllowRule{
+			{Domain: "claude.ai", Ports: []int{443}},
+			{Domain: "*.anthropic.com", Ports: []int{443}},
+			{Domain: "extra.example.com", Ports: []int{8443}},
+		},
+	}
+	resolved := map[string][]string{
+		"claude.ai":         {"160.79.104.10"},
+		"*.anthropic.com":   {"160.79.104.10"},
+		"extra.example.com": {"160.79.104.10"},
+	}
+	cmds := networkACLCommands("demo", policy, resolved)
+
+	var allowRuleCount int
+	for _, c := range cmds {
+		if contains(c, "destination=160.79.104.10") && contains(c, "action=allow") {
+			allowRuleCount++
+		}
+	}
+	if allowRuleCount != 2 {
+		t.Errorf("expected 2 distinct allow rules for 160.79.104.10 (443 once, 8443 once), got %d in %v", allowRuleCount, cmds)
+	}
+}
+
 // TestNetworkACLCommands_NoInvalidEgressActionKey is a regression test for
 // a real-world failure on Incus 6.23 (Fedora 44): an earlier version of
 // networkACLCommands issued `incus network acl set <acl> egress.action=reject`,

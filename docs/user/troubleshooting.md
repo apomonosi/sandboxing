@@ -89,6 +89,21 @@ doesn't include incus-agent support at all (some minimal or custom images
 don't) — in which case `exec`/`shell` won't work on that image, but
 `agentctl view` (the console) still will, since it doesn't need the agent.
 
+## `applying network policy` fails with "Duplicate of egress rule N"
+
+```
+Error: incus network acl rule add agentctl-<name> egress action=allow destination=<ip> protocol=tcp destination_port=443: exit status 1: Error: Duplicate of egress rule 4
+```
+
+This shouldn't happen on current `agentctl` — it was a real bug where two
+different allow-domains that happened to resolve to the same IP (common
+behind shared CDN infrastructure; e.g. `--agent=claude`'s `claude.ai` and
+`*.anthropic.com` allow-domains can share an IP) produced two
+byte-identical ACL rules, which Incus rejects on the second one. Fixed by
+deduplicating identical rule commands before applying the policy. If you
+still hit this on an older `agentctl` build, no workaround is needed beyond
+upgrading — there's nothing to fix in your own profile or `--allow` flags.
+
 ## Agent install fails or never finishes
 
 `create --agent=<name>` runs that agent's install command (e.g. `curl ... |
