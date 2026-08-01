@@ -2,6 +2,7 @@ package incus
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
 )
@@ -256,6 +257,15 @@ func networkACLCommands(instanceName string, policy provider.NetworkPolicy, reso
 		}
 	}
 
+	// Two distinct allow-domains (e.g. --agent=claude's "claude.ai" and
+	// "*.anthropic.com") can resolve to the same IP behind shared CDN/
+	// load-balancer infrastructure, which would otherwise produce two
+	// byte-identical `acl rule add` invocations — Incus rejects the
+	// second with "Duplicate of egress rule N" and the whole apply fails.
+	// Track exact rule commands already emitted and skip re-adding one,
+	// rather than deduping by IP alone (two rules for the same IP but
+	// different ports are legitimately distinct, not duplicates).
+	seenRules := make(map[string]bool)
 	for _, rule := range policy.Allow {
 		for _, ip := range resolvedAllowIPs[rule.Domain] {
 			ruleArgs := []string{"network", "acl", "rule", "add", acl, "egress",
@@ -263,6 +273,11 @@ func networkACLCommands(instanceName string, policy provider.NetworkPolicy, reso
 			if len(rule.Ports) > 0 {
 				ruleArgs = append(ruleArgs, "destination_port="+joinPorts(rule.Ports))
 			}
+			key := strings.Join(ruleArgs, " ")
+			if seenRules[key] {
+				continue
+			}
+			seenRules[key] = true
 			cmds = append(cmds, ruleArgs)
 		}
 	}
