@@ -21,11 +21,13 @@ import (
 // Provider is an in-memory, concurrency-safe fake implementing
 // provider.Provider.
 type Provider struct {
-	mu           sync.Mutex
-	instances    map[string]*provider.Instance
-	snapshots    map[string][]provider.Snapshot
-	capabilities provider.Table
-	now          func() time.Time
+	mu             sync.Mutex
+	instances      map[string]*provider.Instance
+	snapshots      map[string][]provider.Snapshot
+	capabilities   provider.Table
+	now            func() time.Time
+	agentRequested map[string]string
+	agentInstalled map[string]bool
 }
 
 // New builds a fake Provider with a fully Supported capability table.
@@ -36,10 +38,12 @@ func New() *Provider {
 		table[f] = provider.Capability{Feature: f, Status: provider.Supported}
 	}
 	return &Provider{
-		instances:    make(map[string]*provider.Instance),
-		snapshots:    make(map[string][]provider.Snapshot),
-		capabilities: table,
-		now:          time.Now,
+		instances:      make(map[string]*provider.Instance),
+		snapshots:      make(map[string][]provider.Snapshot),
+		capabilities:   table,
+		now:            time.Now,
+		agentRequested: make(map[string]string),
+		agentInstalled: make(map[string]bool),
 	}
 }
 
@@ -232,6 +236,40 @@ func (p *Provider) ImagePull(ctx context.Context, ref string) error { return nil
 
 func (p *Provider) ImageBuild(ctx context.Context, spec provider.ImageBuildSpec) (string, error) {
 	return spec.OutputName, nil
+}
+
+func (p *Provider) SetAgentRequested(ctx context.Context, name, agentName string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, err := p.lookup(name); err != nil {
+		return err
+	}
+	p.agentRequested[name] = agentName
+	p.agentInstalled[name] = false
+	return nil
+}
+
+func (p *Provider) MarkAgentInstalled(ctx context.Context, name string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, err := p.lookup(name); err != nil {
+		return err
+	}
+	p.agentInstalled[name] = true
+	return nil
+}
+
+func (p *Provider) PendingAgentInstall(ctx context.Context, name string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, err := p.lookup(name); err != nil {
+		return "", err
+	}
+	requested := p.agentRequested[name]
+	if requested == "" || p.agentInstalled[name] {
+		return "", nil
+	}
+	return requested, nil
 }
 
 func (p *Provider) Logs(ctx context.Context, name string, opts provider.LogOptions) (io.ReadCloser, error) {

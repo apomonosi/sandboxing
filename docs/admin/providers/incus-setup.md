@@ -65,6 +65,19 @@ this is already set up — it does not manage Incus permissions itself.
   against. If you're using an image that *is* Secure Boot signed and want
   it enforced, re-enable it by hand after creation:
   `incus config set <name> security.secureboot=true`.
+- `agentctl create` also provisions a non-root default user (see
+  [Profiles & Policies](../../user/profiles-and-policies.md#default-non-root-user))
+  by running a small bootstrap script inside the instance right after network
+  policy is applied. It detects `useradd` (Debian/Ubuntu family) or `adduser`
+  (Alpine/busybox family) — images using neither will fail this step with a
+  clear error rather than silently staying root-only. It attempts a fixed
+  UID (1500) for predictability and falls back to whatever the OS assigns if
+  that's already taken; the actual result is recorded on the instance via
+  `incus config get <name> user.agentctl-shell-user` (colon-delimited
+  `username:uid:home`), which `shell`/`exec` read back on every invocation —
+  agentctl keeps no state of its own here, Incus's own per-instance config is
+  the source of truth. Re-running the bootstrap step (e.g. on a retry) is a
+  no-op if the user already exists.
 
 ## Verify
 
@@ -72,6 +85,7 @@ this is already set up — it does not manage Incus permissions itself.
 $ agentctl config set provider=incus
 $ agentctl create test-instance --image=images:alpine/edge
 $ agentctl start test-instance
-$ agentctl exec test-instance -- echo ok
+$ agentctl exec test-instance -- whoami        # -> agent (non-root default)
+$ agentctl exec --root test-instance -- whoami # -> root
 $ agentctl delete test-instance --force
 ```

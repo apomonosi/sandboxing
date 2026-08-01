@@ -1,6 +1,7 @@
 package incus
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
@@ -20,10 +21,16 @@ func cmd(args []string) provider.Command {
 
 // PreviewCreate lists every command Create would run, in order: the
 // instance init, an optional root-disk resize, one device-add per mount
-// and per published port, and finally the network-policy application
-// sequence (see previewNetworkPolicy). It deliberately does not include
-// the trailing `incus list` status query Create() issues to build its
-// return value — that's a read, not part of "achieving the sandbox goal".
+// and per published port, the network-policy application sequence (see
+// previewNetworkPolicy), and finally the user-bootstrap invocation. It
+// deliberately does not include two things Create() also does: the
+// trailing `incus list` status query (a read, not part of "achieving the
+// sandbox goal"), and the `config set` call that records the bootstrap
+// script's resulting UID — that value only exists after actually running
+// the (mutating) bootstrap script, so it can't be shown without lying
+// about it; the invocation that pipes the script over stdin is shown
+// instead, same category of gap as Exec/Shell's invisible waitForAgent
+// retry loop.
 func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command {
 	var cmds []provider.Command
 	cmds = append(cmds, cmd(append([]string{"init"}, buildInitArgs(spec)...)))
@@ -38,6 +45,13 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 		cmds = append(cmds, cmd(buildPortProxyDeviceArgs(spec.Name, fmt.Sprintf("port%d", i), pp)))
 	}
 	cmds = append(cmds, p.previewNetworkPolicy(spec.Name, spec.Overrides)...)
+
+	username := spec.DefaultUser
+	if username == "" {
+		username = defaultUsername
+	}
+	cmds = append(cmds, cmd(buildExecArgs(spec.Name, bootstrapUserCommand(username), nil)))
+
 	return cmds
 }
 
@@ -75,12 +89,26 @@ func (p *Provider) PreviewDelete(name string, force bool) []provider.Command {
 // not a fixed command sequence, so there's nothing deterministic to show
 // for it here; the command below is what actually runs once the agent
 // responds.
-func (p *Provider) PreviewExec(name string, opts provider.ExecOptions) []provider.Command {
-	return []provider.Command{cmd(buildExecArgs(name, opts.Command))}
+//
+// Both call resolveExecUser — the same live, read-only config lookup the
+// real Exec/Shell use — so the previewed --user/--cwd flags are the ones
+// that will actually be used, not a guess. That's also why these two
+// (uniquely among CommandPreviewer's methods) take a context and can
+// fail: the lookup is a real `incus config get` call.
+func (p *Provider) PreviewExec(ctx context.Context, name string, opts provider.ExecOptions) ([]provider.Command, error) {
+	u, err := p.resolveExecUser(ctx, name, opts.Root)
+	if err != nil {
+		return nil, fmt.Errorf("resolving default user: %w", err)
+	}
+	return []provider.Command{cmd(buildExecArgs(name, opts.Command, u))}, nil
 }
 
-func (p *Provider) PreviewShell(name string) []provider.Command {
-	return []provider.Command{cmd(buildShellArgs(name))}
+func (p *Provider) PreviewShell(ctx context.Context, name string, opts provider.ShellOptions) ([]provider.Command, error) {
+	u, err := p.resolveExecUser(ctx, name, opts.Root)
+	if err != nil {
+		return nil, fmt.Errorf("resolving default user: %w", err)
+	}
+	return []provider.Command{cmd(buildShellArgs(name, u))}, nil
 }
 
 func (p *Provider) PreviewView(name string, opts provider.ViewOptions) []provider.Command {

@@ -50,6 +50,28 @@ spec:
 the instance name — the built-in profiles use this so each instance gets its
 own workspace directory automatically.
 
+## Default non-root user
+
+`agentctl create` provisions a non-root user inside every new instance and
+makes it the default for `shell`/`exec` — not root. This is defense-in-depth:
+the VM boundary is still the primary protection against host escape, but if
+the agent *process itself* is compromised (a malicious dependency, a
+prompt-injected shell command), it shouldn't automatically get root inside
+the guest.
+
+- The user has passwordless `sudo`, so anything that genuinely needs root
+  (`apt install`, service management, ...) still works — this is hygiene and
+  an audit signal (a `sudo` invocation is a distinct, loggable event), **not**
+  a hard security boundary against a truly malicious agent.
+- The username is `agent` by default, or matches the agent name if you used
+  `--agent=<name>` (see [Agent Provisioning](agent-provisioning.md)) — so
+  `--agent=claude` provisions and runs as a `claude` user.
+- Root is always an explicit, visible opt-out, never removed:
+  `agentctl shell <name> --root` / `agentctl exec --root <name> -- <cmd>`.
+- This only affects `shell`/`exec` (the agent-mediated command channel).
+  `agentctl view`'s console access is unaffected — it doesn't go through a
+  guest user context at all.
+
 ## Combining a profile with ad-hoc flags
 
 Flags on `create` always win over a profile's settings, and list-valued

@@ -2,9 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/apomonosi/sandboxing/internal/agent"
 	"github.com/apomonosi/sandboxing/internal/profile"
 	"github.com/apomonosi/sandboxing/internal/provider"
 	"github.com/apomonosi/sandboxing/internal/spec"
@@ -12,16 +14,17 @@ import (
 
 func newCreateCmd() *cobra.Command {
 	var (
-		image    string
-		specFile string
-		profiles []string
-		allow    []string
-		denyLAN  bool
-		allowLAN bool
-		ports    []string
-		cpuCores int
-		memory   string
-		diskSize string
+		image     string
+		specFile  string
+		profiles  []string
+		allow     []string
+		denyLAN   bool
+		allowLAN  bool
+		ports     []string
+		cpuCores  int
+		memory    string
+		diskSize  string
+		agentName string
 	)
 
 	cmd := &cobra.Command{
@@ -63,6 +66,15 @@ func newCreateCmd() *cobra.Command {
 				}
 			}
 
+			var agentSpec agent.Spec
+			if agentName != "" {
+				var ok bool
+				agentSpec, ok = agent.Lookup(agentName)
+				if !ok {
+					return fmt.Errorf("unknown agent %q (valid: %s)", agentName, strings.Join(agent.Names(), ", "))
+				}
+			}
+
 			var flagOverrides profile.Policy
 			flagOverrides.Network.DenyLAN = denyLAN && !allowLAN
 			for _, a := range allow {
@@ -72,6 +84,7 @@ func newCreateCmd() *cobra.Command {
 				}
 				flagOverrides.Network.Allow = append(flagOverrides.Network.Allow, rule)
 			}
+			flagOverrides.Network.Allow = append(flagOverrides.Network.Allow, agentSpec.AllowDomains...)
 			for _, portSpec := range ports {
 				pp, err := parsePortFlag(portSpec)
 				if err != nil {
@@ -114,6 +127,9 @@ func newCreateCmd() *cobra.Command {
 			}
 
 			instSpec := spec.ToInstanceSpec(name, resolvedImage, profileNames, policy)
+			if agentName != "" {
+				instSpec.DefaultUser = agentName
+			}
 
 			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
 				return pv.PreviewCreate(instSpec)
@@ -124,6 +140,24 @@ func newCreateCmd() *cobra.Command {
 			inst, err := p.Create(cmd.Context(), instSpec)
 			if err != nil {
 				return err
+			}
+
+			if agentName != "" {
+				if err := gateOrBlock(w, providerName, p.Capabilities().Get(provider.FeatureStart), fp); err != nil {
+					return err
+				}
+				if err := p.SetAgentRequested(cmd.Context(), name, agentName); err != nil {
+					return fmt.Errorf("recording requested agent %q: %w", agentName, err)
+				}
+				if err := p.Start(cmd.Context(), name); err != nil {
+					return fmt.Errorf("starting instance to install agent %q: %w", agentName, err)
+				}
+				if updated, err := p.Status(cmd.Context(), name); err == nil {
+					inst = updated
+				}
+				if err := installAgent(cmd.Context(), w, p, name, agentSpec); err != nil {
+					return err
+				}
 			}
 			return RenderInstance(w, inst, jsonOutput(cmd))
 		},
@@ -137,6 +171,7 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&allowLAN, "allow-lan", false, "opt out of --deny-lan for this instance")
 	cmd.Flags().StringSliceVar(&ports, "port", nil, "publish a port \"host:guest[/proto]\" (repeatable)")
 	cmd.Flags().IntVar(&cpuCores, "cpu-cores", 0, "override CPU core limit")
+	cmd.Flags().StringVar(&agentName, "agent", "", "just-in-time install a coding agent after create (valid: "+strings.Join(agent.Names(), ", ")+")")
 	cmd.Flags().StringVar(&memory, "memory", "", "override memory limit, e.g. 4GiB")
 	cmd.Flags().StringVar(&diskSize, "disk-size", "", "override root disk size, e.g. 20GiB")
 

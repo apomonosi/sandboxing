@@ -51,6 +51,29 @@ on an instance created by an older `agentctl` build, fix it directly:
 `incus config set <name> security.secureboot=false`, then `agentctl start`
 again.
 
+## `create` fails during non-root user provisioning
+
+`agentctl create` runs a bootstrap script inside the instance (right after
+network policy is applied) to provision the non-root default user that
+`shell`/`exec` use — see
+[Profiles & Policies](profiles-and-policies.md#default-non-root-user). Two
+ways this can fail:
+
+- **Neither `useradd` nor `adduser` is present.** Some minimal/custom images
+  ship neither tool. The bootstrap script fails with a clear error instead of
+  silently leaving the instance root-only. There's no workaround short of
+  using an image that includes one of them (any mainstream Debian/Ubuntu or
+  Alpine-family image does).
+- **`sudo` can't be installed.** The script tries `apt-get install -y sudo` or
+  `apk add --no-cache sudo` if `sudo` is missing, which needs working network
+  egress at create time. If your allowlist is unusually restrictive before
+  the instance is fully up, this step can fail — check the instance's egress
+  policy, or use an image that already includes `sudo` preinstalled.
+
+Re-running the bootstrap step is safe: it's idempotent and a no-op if the
+user already exists, so retrying `agentctl create` (after deleting the failed
+instance) or a future retry mechanism won't double-provision anything.
+
 ## `shell`/`exec` say "Error: VM agent isn't currently running"
 
 `agentctl shell`/`agentctl exec` need the in-guest `incus-agent` to have
@@ -65,6 +88,28 @@ long to boot (just retry `agentctl shell`/`exec` again), or the image
 doesn't include incus-agent support at all (some minimal or custom images
 don't) — in which case `exec`/`shell` won't work on that image, but
 `agentctl view` (the console) still will, since it doesn't need the agent.
+
+## Agent install fails or never finishes
+
+`create --agent=<name>` runs that agent's install command (e.g. `curl ... |
+bash`) as soon as the instance is up — see
+[Agent Provisioning](agent-provisioning.md). This needs working egress at
+install time, so a flaky network mid-install, or an unusually restrictive
+`--allow`/profile combination that's missing a domain the install script
+itself redirects through, can leave `create` reporting a failure with the
+instance left running.
+
+You don't need to redo anything by hand: the very next `agentctl start
+<name>` — even a completely ordinary one, with no `--agent` flag — detects
+the incomplete install and retries it automatically before doing anything
+else. If it keeps failing, the error `create`/`start` printed is the actual
+install script's output; check that against whatever domain it's trying to
+reach and extend `--allow` if it's egress being blocked, same as any other
+blocked-domain issue.
+
+An already-successful install is never repeated: `create --agent=<name>`
+records success once the install script exits `0`, and every subsequent
+`start` is a no-op with respect to the agent.
 
 ## An `--allow` entry stopped working after a while
 

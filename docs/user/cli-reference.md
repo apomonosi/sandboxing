@@ -41,8 +41,12 @@ Creates an instance without starting it.
 | `--deny-lan` / `--allow-lan` | Block (default) or allow LAN egress |
 | `--port <host:guest[/proto]>` | Publish a port (repeatable) |
 | `--cpu-cores`, `--memory`, `--disk-size` | Resource overrides |
+| `--agent <name>` | Just-in-time install a coding agent (`claude`, `codex`, `opencode`, `pi`) — implies `start`; see [Agent Provisioning](agent-provisioning.md) |
 
-Supports `--preview`/`--dry-run` (see [Preview Mode](preview-mode.md)).
+Supports `--preview`/`--dry-run` (see [Preview Mode](preview-mode.md)); with
+`--agent` set, preview only shows the `create` command itself — the implied
+`start` and the install step aren't previewed and don't run under
+`--preview` either, since preview returns before `create` actually executes.
 
 ### `agentctl start <name>` / `agentctl stop <name> [--force] [--timeout <secs>]` / `agentctl delete <name> [--force]`
 
@@ -55,16 +59,22 @@ created time).
 
 ## Interactive access
 
-### `agentctl shell <name>`
+### `agentctl shell <name> [--root]`
 
-Opens an interactive session. (`login` also works, as a hidden alias, for
-anyone used to that verb from an earlier design — but `shell` is the
-documented name, since "login" implies credential auth against a remote
+Opens an interactive session, as the instance's provisioned non-root user by
+default (see [Profiles & Policies](profiles-and-policies.md#default-non-root-user)).
+Pass `--root` for a root shell instead. (`login` also works, as a hidden
+alias, for anyone used to that verb from an earlier design — but `shell` is
+the documented name, since "login" implies credential auth against a remote
 account, which this isn't.) Supports `--preview`/`--dry-run`.
 
-### `agentctl exec <name> -- <command...>`
+### `agentctl exec <name> -- <command...>` / `agentctl exec --root <name> -- <command...>`
 
-Runs one command and exits with its exit code. Supports `--preview`/`--dry-run`.
+Runs one command and exits with its exit code, as the provisioned non-root
+user by default. **`--root` must come before `<name>`**, not after — `exec`
+turns off flag/positional interleaving past the first positional argument
+so that flags meant for the *inner* command (e.g. `exec demo -- ls --root`)
+are never mistaken for agentctl's own. Supports `--preview`/`--dry-run`.
 
 ### `agentctl view <name> [--read-only]`
 
