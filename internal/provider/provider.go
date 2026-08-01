@@ -61,6 +61,24 @@ type Provider interface {
 	// Capabilities returns this provider's full capability table. Must
 	// have a non-default entry for every Feature in AllFeatures.
 	Capabilities() Table
+
+	// SetAgentRequested records that name was created with agentName
+	// requested for JIT install (`create --agent=<name>`), so a later
+	// `start` can detect and retry an install that didn't finish. Tracked
+	// at the backend level (e.g. Incus instance config), not by agentctl
+	// itself, so it survives independently of whether the in-guest agent
+	// is currently reachable. Providers that can't persist this (Lima,
+	// Hyper-V stubs) may treat it as a no-op — the only consequence is
+	// that PendingAgentInstall never has anything to report there.
+	SetAgentRequested(ctx context.Context, name, agentName string) error
+	// MarkAgentInstalled records that the agent requested via
+	// SetAgentRequested finished installing successfully.
+	MarkAgentInstalled(ctx context.Context, name string) error
+	// PendingAgentInstall returns the agent name requested for name if
+	// JIT install hasn't completed yet (e.g. a transient failure during
+	// create), or "" if no agent was ever requested, or installation
+	// already completed.
+	PendingAgentInstall(ctx context.Context, name string) (string, error)
 }
 
 // InstanceSpec describes what to create.
@@ -71,6 +89,11 @@ type InstanceSpec struct {
 	Overrides NetworkPolicy
 	Resources ResourceLimits
 	Mounts    []Mount
+	// DefaultUser is the non-root user Shell/Exec should default to for
+	// this instance. Empty means the provider picks its own generic
+	// default (e.g. "agent") rather than root — providers that can't
+	// provision a non-root user at all are unaffected by this field.
+	DefaultUser string
 }
 
 // NetworkPolicy is the provider-facing view of profile.Policy's network
@@ -141,12 +164,19 @@ type ExecOptions struct {
 	Stdout  io.Writer
 	Stderr  io.Writer
 	TTY     bool
+	// Root, if true, runs as root instead of the instance's provisioned
+	// non-root default user — an explicit, visible opt-out (like
+	// --force-partial and --allow-lan), never removed outright.
+	Root bool
 }
 
 type ShellOptions struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	// Root, if true, runs as root instead of the instance's provisioned
+	// non-root default user.
+	Root bool
 }
 
 type ViewOptions struct {

@@ -98,3 +98,20 @@ func (p *Provider) ImageBuild(ctx context.Context, spec provider.ImageBuildSpec)
 func (p *Provider) Logs(ctx context.Context, name string, opts provider.LogOptions) (io.ReadCloser, error) {
 	return nil, p.err(provider.FeatureLogsNetwork)
 }
+
+// SetAgentRequested, MarkAgentInstalled, and PendingAgentInstall are
+// unreachable on this stub in practice: `create --agent=<name>` only
+// calls them after a successful Create, which always fails here first.
+// They report the same FeatureCreate status for consistency rather than
+// a distinct, never-actually-hit status.
+func (p *Provider) SetAgentRequested(ctx context.Context, name, agentName string) error {
+	return p.err(provider.FeatureCreate)
+}
+
+func (p *Provider) MarkAgentInstalled(ctx context.Context, name string) error {
+	return p.err(provider.FeatureCreate)
+}
+
+func (p *Provider) PendingAgentInstall(ctx context.Context, name string) (string, error) {
+	return "", p.err(provider.FeatureCreate)
+}

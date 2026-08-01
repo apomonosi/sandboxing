@@ -1,6 +1,9 @@
 package provider
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // Command is a single OS-native command agentctl would execute — the
 // binary plus its arguments, exactly as passed to os/exec. It exists so
@@ -69,8 +72,14 @@ type CommandPreviewer interface {
 	PreviewStart(name string) []Command
 	PreviewStop(name string, opts StopOptions) []Command
 	PreviewDelete(name string, force bool) []Command
-	PreviewExec(name string, opts ExecOptions) []Command
-	PreviewShell(name string) []Command
+	// PreviewExec and PreviewShell need a live, read-only lookup (which
+	// non-root user is provisioned for this instance) to show the
+	// --user/--cwd flags that will actually be used, so — unlike every
+	// other method here — they take a context and can fail. This is a
+	// deliberately asymmetric interface: only these two methods need
+	// live data, so only these two pay for it.
+	PreviewExec(ctx context.Context, name string, opts ExecOptions) ([]Command, error)
+	PreviewShell(ctx context.Context, name string, opts ShellOptions) ([]Command, error)
 	PreviewView(name string, opts ViewOptions) []Command
 	PreviewImagePull(ref string) []Command
 }

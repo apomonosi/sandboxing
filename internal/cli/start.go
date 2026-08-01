@@ -24,7 +24,10 @@ func newStartCmd() *cobra.Command {
 			}); handled {
 				return err
 			}
-			return p.Start(cmd.Context(), args[0])
+			if err := p.Start(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			return retryPendingAgentInstall(cmd.Context(), cmd.OutOrStdout(), p, args[0])
 		},
 	}
 }

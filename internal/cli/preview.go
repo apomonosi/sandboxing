@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -39,6 +40,33 @@ func tryPreview(cmd *cobra.Command, providerName string, p provider.Provider, bu
 		return true, nil
 	}
 	for _, c := range buildFn(previewer) {
+		fmt.Fprintln(w, c.String())
+	}
+	return true, nil
+}
+
+// tryPreviewCtx is tryPreview's counterpart for the two
+// CommandPreviewer methods that need a live lookup and can therefore
+// fail — PreviewExec and PreviewShell, which resolve the instance's
+// provisioned non-root user via a real `incus config get` call so the
+// previewed --user/--cwd flags match what will actually run. See the
+// doc comment on provider.CommandPreviewer for why only these two are
+// shaped this way.
+func tryPreviewCtx(cmd *cobra.Command, providerName string, p provider.Provider, buildFn func(context.Context, provider.CommandPreviewer) ([]provider.Command, error)) (handled bool, err error) {
+	if !previewRequested(cmd) {
+		return false, nil
+	}
+	w := cmd.OutOrStdout()
+	previewer, ok := p.(provider.CommandPreviewer)
+	if !ok {
+		fmt.Fprintf(w, "agentctl: --preview is not yet supported for provider %q (no command-preview implementation exists yet)\n", providerName)
+		return true, nil
+	}
+	cmds, err := buildFn(cmd.Context(), previewer)
+	if err != nil {
+		return true, err
+	}
+	for _, c := range cmds {
 		fmt.Fprintln(w, c.String())
 	}
 	return true, nil

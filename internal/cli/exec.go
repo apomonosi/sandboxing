@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -31,14 +32,16 @@ func newExecCmd() *cobra.Command {
 				return err
 			}
 
+			root, _ := cmd.Flags().GetBool("root")
 			execOpts := provider.ExecOptions{
 				Command: command,
 				Stdin:   cmd.InOrStdin(),
 				Stdout:  cmd.OutOrStdout(),
 				Stderr:  cmd.ErrOrStderr(),
+				Root:    root,
 			}
-			if handled, err := tryPreview(cmd, providerName, p, func(pv provider.CommandPreviewer) []provider.Command {
-				return pv.PreviewExec(name, execOpts)
+			if handled, err := tryPreviewCtx(cmd, providerName, p, func(ctx context.Context, pv provider.CommandPreviewer) ([]provider.Command, error) {
+				return pv.PreviewExec(ctx, name, execOpts)
 			}); handled {
 				return err
 			}
@@ -54,5 +57,6 @@ func newExecCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().SetInterspersed(false)
+	addRootFlag(cmd)
 	return cmd
 }

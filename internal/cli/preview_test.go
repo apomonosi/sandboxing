@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -27,11 +28,22 @@ func (previewingFake) PreviewStop(name string, opts provider.StopOptions) []prov
 func (previewingFake) PreviewDelete(name string, force bool) []provider.Command {
 	return []provider.Command{{Binary: "fakectl", Args: []string{"delete", name}}}
 }
-func (previewingFake) PreviewExec(name string, opts provider.ExecOptions) []provider.Command {
-	return []provider.Command{{Binary: "fakectl", Args: append([]string{"exec", name, "--"}, opts.Command...)}}
+func (previewingFake) PreviewExec(ctx context.Context, name string, opts provider.ExecOptions) ([]provider.Command, error) {
+	args := append([]string{"exec", name}, rootFlagArg(opts.Root)...)
+	return []provider.Command{{Binary: "fakectl", Args: append(append(args, "--"), opts.Command...)}}, nil
 }
-func (previewingFake) PreviewShell(name string) []provider.Command {
-	return []provider.Command{{Binary: "fakectl", Args: []string{"shell", name}}}
+func (previewingFake) PreviewShell(ctx context.Context, name string, opts provider.ShellOptions) ([]provider.Command, error) {
+	args := append([]string{"shell", name}, rootFlagArg(opts.Root)...)
+	return []provider.Command{{Binary: "fakectl", Args: args}}, nil
+}
+
+// rootFlagArg lets tests observe whether --root actually threaded
+// through to ExecOptions.Root/ShellOptions.Root.
+func rootFlagArg(root bool) []string {
+	if root {
+		return []string{"--as-root"}
+	}
+	return nil
 }
 func (previewingFake) PreviewView(name string, opts provider.ViewOptions) []provider.Command {
 	return []provider.Command{{Binary: "fakectl", Args: []string{"view", name}}}
@@ -110,6 +122,40 @@ func TestCLI_Preview_AllWiredCommands(t *testing.T) {
 		if !strings.Contains(out, c.want) {
 			t.Errorf("%v --preview: output %q missing %q", c.args, out, c.want)
 		}
+	}
+}
+
+func TestCLI_Root_ThreadsThroughToPreview(t *testing.T) {
+	useIsolatedConfig(t)
+	p := previewingFake{fake.New()}
+
+	shellOut, err := executeWith(t, p, "--preview", "shell", "demo", "--root")
+	if err != nil {
+		t.Fatalf("shell --preview --root: %v (%s)", err, shellOut)
+	}
+	if !strings.Contains(shellOut, "--as-root") {
+		t.Errorf("shell --root output %q should reflect Root=true reaching the provider", shellOut)
+	}
+
+	// --root must precede the instance name for exec: SetInterspersed(false)
+	// (see exec.go) passes everything from the first positional arg onward
+	// straight through as the inner command, by design, so it isn't
+	// mistaken for a flag meant for the inner command.
+	execOut, err := executeWith(t, p, "--preview", "exec", "--root", "demo", "--", "whoami")
+	if err != nil {
+		t.Fatalf("exec --preview --root: %v (%s)", err, execOut)
+	}
+	if !strings.Contains(execOut, "--as-root") {
+		t.Errorf("exec --root output %q should reflect Root=true reaching the provider", execOut)
+	}
+
+	// Without --root, no trace of it.
+	noRootOut, err := executeWith(t, p, "--preview", "shell", "demo")
+	if err != nil {
+		t.Fatalf("shell --preview: %v (%s)", err, noRootOut)
+	}
+	if strings.Contains(noRootOut, "--as-root") {
+		t.Errorf("shell without --root should not reflect Root=true, got %q", noRootOut)
 	}
 }
 

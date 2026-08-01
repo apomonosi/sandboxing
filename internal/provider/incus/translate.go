@@ -58,12 +58,81 @@ func buildDeleteArgs(name string, force bool) []string {
 	return args
 }
 
-func buildExecArgs(name string, command []string) []string {
-	return append([]string{"exec", name, "--"}, command...)
+// execUser carries the resolved non-root identity Exec/Shell should run
+// as. nil means root — today's implicit default, and what --root asks
+// for explicitly. Incus's exec API takes numeric --user/--group only
+// (not a username) and does not derive $HOME/cwd from the UID — both
+// default to /root regardless of --user — so both must be set explicitly
+// whenever uid is non-root.
+type execUser struct {
+	uid  string
+	home string
 }
 
-func buildShellArgs(name string) []string {
-	return []string{"exec", name, "--", "/bin/bash"}
+// execUserArgs returns the --user/--group/--cwd/--env flags for u, or
+// nil for root (matching Incus's own default exec behavior exactly, so
+// omitting these flags entirely is correct, not just "empty").
+func execUserArgs(u *execUser) []string {
+	if u == nil {
+		return nil
+	}
+	return []string{"--user", u.uid, "--group", u.uid, "--cwd", u.home, "--env", "HOME=" + u.home}
+}
+
+func buildExecArgs(name string, command []string, u *execUser) []string {
+	args := append([]string{"exec", name}, execUserArgs(u)...)
+	args = append(args, "--")
+	return append(args, command...)
+}
+
+func buildShellArgs(name string, u *execUser) []string {
+	args := append([]string{"exec", name}, execUserArgs(u)...)
+	return append(args, "--", "/bin/bash")
+}
+
+// bootstrapUserCommand is the command Create() execs (as root — bootstrap
+// itself must run unprivileged-user-creation as root) to run
+// bootstrapUserScript (embed.go), piped over stdin rather than templated
+// into a single argument to avoid quoting hazards. username arrives as
+// sh's positional $1 via `-s --`.
+func bootstrapUserCommand(username string) []string {
+	return []string{"sh", "-s", "--", username}
+}
+
+// userConfigKey is the single Incus custom config key (Incus's
+// documented user.* namespace for arbitrary instance metadata) used to
+// remember the provisioned non-root identity across Exec/Shell
+// invocations, so Incus's own daemon stays the sole source of truth —
+// agentctl keeps no separate instance registry of its own. One
+// colon-delimited value (username:uid:home) rather than three keys, so
+// looking it up costs a single `config get` round trip.
+const userConfigKey = "user.agentctl-shell-user"
+
+func buildSetUserConfigArgs(instanceName, username, uid, home string) []string {
+	return []string{"config", "set", instanceName, userConfigKey + "=" + username + ":" + uid + ":" + home}
+}
+
+func buildGetUserConfigArgs(instanceName string) []string {
+	return []string{"config", "get", instanceName, userConfigKey}
+}
+
+// agentConfigKey/agentInstalledConfigKey are the same user.* convention as
+// userConfigKey, tracking `create --agent=<name>`'s JIT install: which
+// agent (if any) was requested, and whether it finished installing. Using
+// two keys (rather than packing into one, unlike userConfigKey) keeps
+// "was anything requested" and "did it finish" independently readable —
+// PendingAgentInstall needs both without parsing a combined value.
+const (
+	agentConfigKey          = "user.agentctl-agent"
+	agentInstalledConfigKey = "user.agentctl-agent-installed"
+)
+
+func buildSetConfigArgs(instanceName, key, value string) []string {
+	return []string{"config", "set", instanceName, key + "=" + value}
+}
+
+func buildGetConfigArgs(instanceName, key string) []string {
+	return []string{"config", "get", instanceName, key}
 }
 
 // buildViewArgs returns the args for Incus's native SPICE console —

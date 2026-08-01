@@ -40,6 +40,35 @@ independently capability-gated concern (`ApplyNetworkPolicy` is its own
   rule goes stale until the policy is re-applied. A DNS-filtering proxy that
   stays dynamically in sync is a possible future improvement, not built now.
 
+## Non-root by default inside the guest
+
+`shell`/`exec` run as a provisioned non-root user by default, not root — see
+[Profiles & Policies](../user/profiles-and-policies.md#default-non-root-user)
+for the mechanism. This is defense-in-depth, not a replacement for the VM
+boundary: if the agent process itself is compromised, it shouldn't
+automatically inherit root inside the guest. Be precise about what this does
+and doesn't buy: the provisioned user has passwordless `sudo`, so it's
+hygiene and an audit signal (a `sudo` invocation is a distinct, loggable
+event a future observability pipeline could act on), **not** a hard security
+boundary — a genuinely malicious agent can still escalate via `sudo`. Root
+remains available as an explicit, visible opt-out (`--root`), never removed.
+
+## `--agent` widens the egress allowlist, visibly
+
+`agentctl create --agent=<name>` (see
+[Agent Provisioning](../user/agent-provisioning.md)) merges that agent's
+required install/runtime domains into the instance's egress allowlist
+before applying network policy — the same default-deny-with-explicit-allow
+mechanism `--allow` already uses, not a separate or looser path. This is a
+deliberate, visible widening tied to the specific agent you asked for
+(e.g. `--agent=claude` allows `claude.ai` and `*.anthropic.com`), not a
+silent one: `agentctl status`/`profile show`-style introspection of the
+resulting policy shows exactly what was added, same as any other `--allow`
+entry. Two multi-provider agents (`opencode`, `pi`) are documented as only
+guaranteeing their install domain (plus, for `pi`, its default-provider
+runtime domain) — extending the allowlist further for a different model
+provider is on you, the same as it would be without `--agent`.
+
 ## Why raw X11 forwarding is excluded
 
 `agentctl view` never forwards X11. An X server has no isolation between

@@ -144,6 +144,92 @@ func TestNetworkACLCommands_NoInvalidEgressActionKey(t *testing.T) {
 	}
 }
 
+func TestExecUserArgs_NilIsRoot(t *testing.T) {
+	if args := execUserArgs(nil); args != nil {
+		t.Errorf("execUserArgs(nil) = %v, want nil (root, matching Incus's own default)", args)
+	}
+}
+
+func TestExecUserArgs_NonRoot(t *testing.T) {
+	got := execUserArgs(&execUser{uid: "1500", home: "/home/claude"})
+	want := []string{"--user", "1500", "--group", "1500", "--cwd", "/home/claude", "--env", "HOME=/home/claude"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("execUserArgs() = %v, want %v", got, want)
+	}
+}
+
+func TestBuildExecArgs_RootVsNonRoot(t *testing.T) {
+	root := buildExecArgs("demo", []string{"echo", "hi"}, nil)
+	wantRoot := []string{"exec", "demo", "--", "echo", "hi"}
+	if !reflect.DeepEqual(root, wantRoot) {
+		t.Errorf("buildExecArgs(nil) = %v, want %v", root, wantRoot)
+	}
+
+	nonRoot := buildExecArgs("demo", []string{"echo", "hi"}, &execUser{uid: "1500", home: "/home/claude"})
+	wantNonRoot := []string{"exec", "demo", "--user", "1500", "--group", "1500", "--cwd", "/home/claude",
+		"--env", "HOME=/home/claude", "--", "echo", "hi"}
+	if !reflect.DeepEqual(nonRoot, wantNonRoot) {
+		t.Errorf("buildExecArgs(execUser) = %v, want %v", nonRoot, wantNonRoot)
+	}
+}
+
+func TestBuildShellArgs_RootVsNonRoot(t *testing.T) {
+	root := buildShellArgs("demo", nil)
+	wantRoot := []string{"exec", "demo", "--", "/bin/bash"}
+	if !reflect.DeepEqual(root, wantRoot) {
+		t.Errorf("buildShellArgs(nil) = %v, want %v", root, wantRoot)
+	}
+
+	nonRoot := buildShellArgs("demo", &execUser{uid: "1500", home: "/home/claude"})
+	wantNonRoot := []string{"exec", "demo", "--user", "1500", "--group", "1500", "--cwd", "/home/claude",
+		"--env", "HOME=/home/claude", "--", "/bin/bash"}
+	if !reflect.DeepEqual(nonRoot, wantNonRoot) {
+		t.Errorf("buildShellArgs(execUser) = %v, want %v", nonRoot, wantNonRoot)
+	}
+}
+
+func TestBootstrapUserCommand(t *testing.T) {
+	got := bootstrapUserCommand("claude")
+	want := []string{"sh", "-s", "--", "claude"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("bootstrapUserCommand(\"claude\") = %v, want %v", got, want)
+	}
+}
+
+func TestUserConfigArgs(t *testing.T) {
+	setArgs := buildSetUserConfigArgs("demo", "claude", "1500", "/home/claude")
+	wantSet := []string{"config", "set", "demo", "user.agentctl-shell-user=claude:1500:/home/claude"}
+	if !reflect.DeepEqual(setArgs, wantSet) {
+		t.Errorf("buildSetUserConfigArgs() = %v, want %v", setArgs, wantSet)
+	}
+
+	getArgs := buildGetUserConfigArgs("demo")
+	wantGet := []string{"config", "get", "demo", "user.agentctl-shell-user"}
+	if !reflect.DeepEqual(getArgs, wantGet) {
+		t.Errorf("buildGetUserConfigArgs() = %v, want %v", getArgs, wantGet)
+	}
+}
+
+func TestAgentConfigArgs(t *testing.T) {
+	setArgs := buildSetConfigArgs("demo", agentConfigKey, "claude")
+	wantSet := []string{"config", "set", "demo", "user.agentctl-agent=claude"}
+	if !reflect.DeepEqual(setArgs, wantSet) {
+		t.Errorf("buildSetConfigArgs(agentConfigKey) = %v, want %v", setArgs, wantSet)
+	}
+
+	getArgs := buildGetConfigArgs("demo", agentConfigKey)
+	wantGet := []string{"config", "get", "demo", "user.agentctl-agent"}
+	if !reflect.DeepEqual(getArgs, wantGet) {
+		t.Errorf("buildGetConfigArgs(agentConfigKey) = %v, want %v", getArgs, wantGet)
+	}
+
+	installedArgs := buildSetConfigArgs("demo", agentInstalledConfigKey, "true")
+	wantInstalled := []string{"config", "set", "demo", "user.agentctl-agent-installed=true"}
+	if !reflect.DeepEqual(installedArgs, wantInstalled) {
+		t.Errorf("buildSetConfigArgs(agentInstalledConfigKey) = %v, want %v", installedArgs, wantInstalled)
+	}
+}
+
 func contains(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {

@@ -27,6 +27,10 @@ const binary = "incus"
 // 44 immediately following `agentctl start` then `agentctl shell`).
 const agentNotRunningMsg = "VM agent isn't currently running"
 
+// defaultUsername is used when InstanceSpec.DefaultUser is empty — i.e.
+// no --agent was given, just a plain create.
+const defaultUsername = "agent"
+
 // agentReadyTimeout and agentPollInterval bound how long Exec/Shell wait
 // for the agent before giving up. Package-level vars (not consts) so
 // tests can shrink them instead of waiting out a real 30s timeout.
@@ -95,7 +99,75 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 		return nil, fmt.Errorf("applying network policy: %w", err)
 	}
 
+	username := spec.DefaultUser
+	if username == "" {
+		username = defaultUsername
+	}
+	if err := p.provisionDefaultUser(ctx, spec.Name, username); err != nil {
+		return nil, fmt.Errorf("provisioning default user: %w", err)
+	}
+
 	return p.Status(ctx, spec.Name)
+}
+
+// provisionDefaultUser runs bootstrapUserScript inside the instance (as
+// root — creating a user requires it) to create username as a non-root
+// account with passwordless sudo, then records the resulting uid/home in
+// Incus's own per-instance config (userConfigKey) so Exec/Shell can look
+// it up later without agentctl keeping any state of its own. Safe to call
+// on an already-provisioned instance — the script is idempotent.
+func (p *Provider) provisionDefaultUser(ctx context.Context, name, username string) error {
+	var stdout, stderr bytes.Buffer
+	exitCode, err := p.runner.RunStream(ctx, binary, buildExecArgs(name, bootstrapUserCommand(username), nil),
+		strings.NewReader(bootstrapUserScript), &stdout, &stderr)
+	if err != nil {
+		return fmt.Errorf("running user bootstrap script: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("user bootstrap script exited %d: %s", exitCode, strings.TrimSpace(stderr.String()))
+	}
+	uid, err := parseBootstrapUID(stdout.String())
+	if err != nil {
+		return err
+	}
+	home := "/home/" + username
+	if _, _, err := p.run(ctx, buildSetUserConfigArgs(name, username, uid, home)...); err != nil {
+		return fmt.Errorf("recording provisioned user: %w", err)
+	}
+	return nil
+}
+
+func parseBootstrapUID(stdout string) (string, error) {
+	for _, line := range strings.Split(stdout, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "AGENTCTL_UID="); ok {
+			return v, nil
+		}
+	}
+	return "", fmt.Errorf("user bootstrap script did not report AGENTCTL_UID (output: %q)", stdout)
+}
+
+// resolveExecUser looks up the non-root identity provisionDefaultUser
+// recorded for name, or returns nil (root) if root is requested
+// explicitly (--root) or if no provisioned user is recorded — e.g. an
+// instance created by an older agentctl build. Never errors just because
+// nothing was recorded; only a malformed recorded value is an error.
+func (p *Provider) resolveExecUser(ctx context.Context, name string, root bool) (*execUser, error) {
+	if root {
+		return nil, nil
+	}
+	stdout, _, err := p.run(ctx, buildGetUserConfigArgs(name)...)
+	if err != nil {
+		return nil, err
+	}
+	val := strings.TrimSpace(string(stdout))
+	if val == "" {
+		return nil, nil
+	}
+	parts := strings.SplitN(val, ":", 3)
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("malformed %s config value %q on instance %q", userConfigKey, val, name)
+	}
+	return &execUser{uid: parts[1], home: parts[2]}, nil
 }
 
 func (p *Provider) Start(ctx context.Context, name string) error {
@@ -149,14 +221,22 @@ func (p *Provider) Exec(ctx context.Context, name string, opts provider.ExecOpti
 	if err := p.waitForAgent(ctx, name, opts.Stderr); err != nil {
 		return -1, err
 	}
-	return p.runner.RunStream(ctx, binary, buildExecArgs(name, opts.Command), opts.Stdin, opts.Stdout, opts.Stderr)
+	u, err := p.resolveExecUser(ctx, name, opts.Root)
+	if err != nil {
+		return -1, fmt.Errorf("resolving default user: %w", err)
+	}
+	return p.runner.RunStream(ctx, binary, buildExecArgs(name, opts.Command, u), opts.Stdin, opts.Stdout, opts.Stderr)
 }
 
 func (p *Provider) Shell(ctx context.Context, name string, opts provider.ShellOptions) error {
 	if err := p.waitForAgent(ctx, name, opts.Stderr); err != nil {
 		return err
 	}
-	_, err := p.runner.RunStream(ctx, binary, buildShellArgs(name), opts.Stdin, opts.Stdout, opts.Stderr)
+	u, err := p.resolveExecUser(ctx, name, opts.Root)
+	if err != nil {
+		return fmt.Errorf("resolving default user: %w", err)
+	}
+	_, err = p.runner.RunStream(ctx, binary, buildShellArgs(name, u), opts.Stdin, opts.Stdout, opts.Stderr)
 	return err
 }
 
@@ -278,6 +358,35 @@ func resolveAllowRules(rules []provider.AllowRule) map[string][]string {
 		out[rule.Domain] = ips
 	}
 	return out
+}
+
+func (p *Provider) SetAgentRequested(ctx context.Context, name, agentName string) error {
+	_, _, err := p.run(ctx, buildSetConfigArgs(name, agentConfigKey, agentName)...)
+	return err
+}
+
+func (p *Provider) MarkAgentInstalled(ctx context.Context, name string) error {
+	_, _, err := p.run(ctx, buildSetConfigArgs(name, agentInstalledConfigKey, "true")...)
+	return err
+}
+
+func (p *Provider) PendingAgentInstall(ctx context.Context, name string) (string, error) {
+	stdout, _, err := p.run(ctx, buildGetConfigArgs(name, agentConfigKey)...)
+	if err != nil {
+		return "", err
+	}
+	requested := strings.TrimSpace(string(stdout))
+	if requested == "" {
+		return "", nil
+	}
+	stdout, _, err = p.run(ctx, buildGetConfigArgs(name, agentInstalledConfigKey)...)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(stdout)) != "" {
+		return "", nil
+	}
+	return requested, nil
 }
 
 func (p *Provider) ImagePull(ctx context.Context, ref string) error {
