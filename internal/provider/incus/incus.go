@@ -99,12 +99,31 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 		return nil, fmt.Errorf("applying network policy: %w", err)
 	}
 
+	// provisionDefaultUser needs `incus exec`, which requires a running
+	// instance — a freshly `init`'d instance is stopped. Start it just
+	// long enough to provision the user, then stop it again so `create`
+	// still keeps its documented contract of not leaving the instance
+	// running. A forceful stop is fine here: nothing but the bootstrap
+	// script has touched the guest at this point, so there's no graceful-
+	// shutdown state worth waiting on, and create() shouldn't be able to
+	// hang on an image with unreliable ACPI shutdown support.
+	if _, _, err := p.run(ctx, buildStartArgs(spec.Name)...); err != nil {
+		return nil, fmt.Errorf("starting instance to provision default user: %w", err)
+	}
+	if err := p.waitForAgent(ctx, spec.Name, nil); err != nil {
+		return nil, fmt.Errorf("waiting for the VM agent to provision default user: %w", err)
+	}
+
 	username := spec.DefaultUser
 	if username == "" {
 		username = defaultUsername
 	}
 	if err := p.provisionDefaultUser(ctx, spec.Name, username); err != nil {
 		return nil, fmt.Errorf("provisioning default user: %w", err)
+	}
+
+	if _, _, err := p.run(ctx, buildStopArgs(spec.Name, provider.StopOptions{Force: true})...); err != nil {
+		return nil, fmt.Errorf("stopping instance after provisioning default user: %w", err)
 	}
 
 	return p.Status(ctx, spec.Name)

@@ -104,6 +104,18 @@ deduplicating identical rule commands before applying the policy. If you
 still hit this on an older `agentctl` build, no workaround is needed beyond
 upgrading — there's nothing to fix in your own profile or `--allow` flags.
 
+## `provisioning default user: user bootstrap script exited 1: Error: Instance is not running`
+
+This shouldn't happen on current `agentctl` — it was a real bug where
+`create` tried to run the non-root user bootstrap step (which needs `incus
+exec`, and `incus exec` requires a running instance) against a freshly
+`init`'d instance, which is stopped by design. Fixed by having `create`
+briefly start the instance around the bootstrap step and stop it again
+afterward — see [Incus setup](../admin/providers/incus-setup.md) for what
+that means for `create`'s timing. If you still hit this on an older
+`agentctl` build, upgrade; there's nothing to change in your own command or
+profile.
+
 ## Agent install fails or never finishes
 
 `create --agent=<name>` runs that agent's install command (e.g. `curl ... |

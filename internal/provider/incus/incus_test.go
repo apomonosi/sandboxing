@@ -418,3 +418,41 @@ func TestPendingAgentInstall(t *testing.T) {
 		}
 	})
 }
+
+// TestCreate_StartsAndStopsAroundBootstrap is a regression test for a
+// real-world failure: `incus exec` (which the user-bootstrap step uses)
+// requires a running instance, but a freshly `init`'d instance is
+// stopped, so provisioning failed outright with "Error: Instance is not
+// running". Create() must start the instance before bootstrapping and
+// stop it again afterward, in that order, so `create` still ends with
+// the instance stopped (its documented contract) despite needing to run
+// exec-based provisioning in between.
+func TestCreate_StartsAndStopsAroundBootstrap(t *testing.T) {
+	fr := &fakeRunner{}
+	p := NewWithRunner(fr).(*Provider)
+
+	if _, err := p.Create(context.Background(), provider.InstanceSpec{Name: "demo", Image: "images:ubuntu/24.04"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var startIdx, bootstrapIdx, stopIdx = -1, -1, -1
+	for i, c := range fr.calls {
+		switch {
+		case len(c) >= 2 && c[1] == "start":
+			startIdx = i
+		case contains(c, "sh") && contains(c, "-s") && bootstrapIdx == -1:
+			bootstrapIdx = i
+		case len(c) >= 2 && c[1] == "stop":
+			stopIdx = i
+		}
+	}
+	if startIdx == -1 || bootstrapIdx == -1 || stopIdx == -1 {
+		t.Fatalf("expected start, bootstrap, and stop calls, got %v", fr.calls)
+	}
+	if !(startIdx < bootstrapIdx && bootstrapIdx < stopIdx) {
+		t.Errorf("expected start (%d) < bootstrap (%d) < stop (%d)", startIdx, bootstrapIdx, stopIdx)
+	}
+	if !contains(fr.calls[stopIdx], "--force") {
+		t.Errorf("expected the post-bootstrap stop to be forceful, got %v", fr.calls[stopIdx])
+	}
+}
