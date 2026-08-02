@@ -2,21 +2,22 @@
 
 This mirrors the `provider.Table` each backend actually returns from
 `Capabilities()` (see `internal/provider/{incus,lima,hyperv}/capability.go`).
-It reflects this milestone: **Incus is the one real implementation**; Lima
-and Hyper-V are capability-table-driven stubs, so almost everything on those
-two rows is a "not wired up yet," not a platform limitation — see the notes
-below the table for which cells are genuine platform gaps.
+**Incus and Lima are both real implementations**; Hyper-V is still a
+capability-table-driven stub, so almost everything on that row is a "not
+wired up yet," not a platform limitation — see the notes below the table
+for which cells are genuine platform gaps.
 
 | Feature | Incus | Lima | Hyper-V |
 |---|---|---|---|
-| create / start / stop / delete / list / status | Supported | Under development | Under development |
-| exec / shell | Supported | Under development | Under development |
+| create / start / stop / delete / list / status | Supported | Supported | Under development |
+| exec / shell | Supported | Supported | Under development |
 | view (console) | Supported | Under development | Under development |
 | snapshot create/list/restore/delete | Supported | **Not available** | Under development |
 | network.acl (`--allow`) | Supported | **Manual workaround** | Under development |
 | network.deny-lan (`--deny-lan`) | Supported | **Manual workaround** | Under development |
-| network.port-publish (`--port`) | Supported | Under development | **Manual workaround** |
-| image.pull / image.build | Supported | Under development | Under development |
+| network.port-publish (`--port`) | Supported | Supported | **Manual workaround** |
+| image.pull | Supported | **Not available** | Under development |
+| image.build | Supported | Under development | Under development |
 | logs.network / logs.exec | Under development | **Not available** (network only) / Under development | Under development |
 
 ## Reading the "genuine platform gap" cells
@@ -32,6 +33,10 @@ agentctl's own wiring:
 - **Lima: snapshot.\* → Not available.** `limactl snapshot` is explicitly
   experimental/unstable upstream; agentctl won't build on it until it
   stabilizes.
+- **Lima: image.pull → Not available.** Lima has no local named image store
+  to pull into ahead of `create`; a template's base image resolves lazily,
+  per-instance, inside `create`/`start` itself — there's no daemon-side
+  store to wire up to, unlike Incus's `incus image copy`.
 - **Lima: logs.network → Not available.** There's no egress log source to
   read from without the network.acl workaround's `pf` anchor in place first.
 - **Hyper-V: network.port-publish → Manual workaround.** Hyper-V has no
@@ -40,8 +45,12 @@ agentctl's own wiring:
 
 Every other `Under development` cell reflects a backend that supports the
 feature natively (New-VM/Start-VM, Extended Port ACLs, Standard/Production
-checkpoints, VMConnect for Hyper-V; create/start/stop and port forwarding for
-Lima) — agentctl just hasn't wired up the integration yet.
+checkpoints, VMConnect for Hyper-V) — agentctl just hasn't wired up the
+integration yet. On Lima specifically, `view` stays `Under development` by
+deliberate choice this milestone: a real GUI console needs a VNC bridge
+that doesn't exist yet (Lima's default `vz` backend has no display concept
+to attach to), which is a separately-scoped piece of work, not something
+silently dropped.
 
 ## `--preview`/`--dry-run` availability
 
@@ -55,7 +64,7 @@ that means:
 | Provider | `--preview` |
 |---|---|
 | Incus | Live — every command in the table above that's `Supported` |
-| Lima | Nothing to preview yet (no operations are `Supported` yet) |
+| Lima | Live — every command in the table above that's `Supported` |
 | Hyper-V | Nothing to preview yet (no operations are `Supported` yet) |
 
 ## Where this comes from

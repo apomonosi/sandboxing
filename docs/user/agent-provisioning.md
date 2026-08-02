@@ -66,3 +66,14 @@ doing anything else — see
 [Troubleshooting](troubleshooting.md#agent-install-fails-or-never-finishes)
 for details. A plain `create` (no `--agent`) is entirely unaffected by any
 of this.
+
+Where that "was an install requested, did it finish" state actually lives
+differs per provider: on Incus it's recorded on the instance itself (via
+`incus config get <name> user.agentctl-agent`), so the backend's own
+per-instance config stays the single source of truth. Lima has no
+equivalent per-instance custom-metadata primitive, so on Lima this state
+lives in a small local file instead, `~/.config/agentctl/lima-state.yaml`
+(or next to whatever `AGENTCTL_CONFIG` points at) — see
+`internal/provider/lima/state.go`. This only matters if you're inspecting
+or scripting around this state directly; `agentctl start`'s retry
+behavior above is identical either way.

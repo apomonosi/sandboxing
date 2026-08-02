@@ -83,9 +83,14 @@ does instead per provider.
 
 `agentctl` is explicit, via its [capability model](../reference/capability-model.md),
 about what it can and can't yet enforce per backend — see the
-[capability matrix](capability-matrix.md). Two backends (Lima, Hyper-V) are
-stubs this milestone; treat any claim of protection on those platforms as
-not yet real until their capability entries say `Supported`.
+[capability matrix](capability-matrix.md). Hyper-V is still a stub this
+milestone; treat any claim of protection on that platform as not yet real
+until its capability entries say `Supported`. Lima's lifecycle operations
+(create/start/stop/exec/shell/...) are real, but its network-isolation
+guarantees are not: `network.acl` and `network.deny-lan` are both
+`ManualWorkaround` there (Lima has no native ACL primitive), so treat any
+claim of egress protection on Lima as not yet automatic either, until those
+two entries say `Supported`.
 
 ## Observability is explicitly postponed
 

@@ -54,10 +54,10 @@ actually supports. If the operation itself is blocked by the
 available`, or an unforced `manual workaround`), you'll see that message
 instead — `--preview` never fabricates output for something agentctl can't
 really do yet. In practice this means `--preview` is fully live on the Incus
-backend today, and has nothing to show yet on Lima/Hyper-V, since those are
-still stub implementations. Once those backends grow real implementations,
-they get `--preview` support the same way Incus did: by implementing the
-same internal interface (see [Capability Model](../reference/capability-model.md)).
+and Lima backends today, and has nothing to show yet on Hyper-V, since that's
+still a stub implementation. Once that backend grows a real implementation,
+it gets `--preview` support the same way Incus and Lima did: by implementing
+the same internal interface (see [Capability Model](../reference/capability-model.md)).
 
 ## What guarantees preview output matches reality
 

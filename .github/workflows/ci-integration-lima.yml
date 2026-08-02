@@ -1,0 +1,30 @@
+name: Lima Integration Tests
+
+# Real-Lima integration tests are slower and more environment-sensitive
+# than the unit suite (installing Lima, booting a real VM), so they run
+# on a manual trigger rather than blocking every PR — same reasoning as
+# ci-integration.yml's Incus suite. See docs and
+# internal/provider/lima/integration_test.go.
+#
+# Unlike the Incus suite, this one is NOT blocked from standard
+# GitHub-hosted runners: Lima's default `vz` backend uses Apple's
+# Virtualization.framework, which works on macos-latest with no special
+# setup (no nested-virtualization requirement the way Incus's
+# `incus init --vm` has on Linux runners). Starting conservative
+# (workflow_dispatch only) to prove out timing/flakiness before
+# considering promotion to `push`/`pull_request`.
+on:
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install Lima
+        run: bash scripts/ci-lima-setup.sh
+      - name: Run integration tests
+        run: AGENTCTL_INTEGRATION_LIMA=1 go test -tags=integration ./internal/provider/lima/...

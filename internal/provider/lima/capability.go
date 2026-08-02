@@ -6,16 +6,26 @@ import "github.com/apomonosi/sandboxing/internal/provider"
 //
 // Two different kinds of gap show up here, and it matters which is which:
 //
-//   - UnderDevelopment: Lima itself supports this fine (create/start/stop,
-//     port forwarding, ...); agentctl just hasn't wired the `limactl`
-//     integration up yet. It's our roadmap, not a platform limit.
+//   - UnderDevelopment: Lima itself supports this fine; agentctl just
+//     hasn't wired the `limactl` integration up yet. It's our roadmap,
+//     not a platform limit.
 //   - ManualWorkaround / NotAvailable: Lima's platform genuinely lacks the
 //     primitive (no network ACL object) or the relevant upstream API is
 //     too unstable to build on yet (limactl snapshot is explicitly
 //     experimental).
+//
+// create/start/stop/delete/list/status/exec/shell/network.port-publish
+// are Supported as of this backend's real implementation (lima.go,
+// translate.go). image.pull is NotAvailable, not just unwired: Lima has
+// no local named image store to pull into ahead of `create` — a
+// template's base image resolves lazily, per-instance, inside
+// `create`/`start` itself, so there's no daemon-side store to wire up to.
 func buildCapabilities() provider.Table {
 	t := make(provider.Table, len(provider.AllFeatures))
 
+	supported := func(f provider.Feature) {
+		t[f] = provider.Capability{Feature: f, Status: provider.Supported}
+	}
 	underDev := func(f provider.Feature, msg string) {
 		t[f] = provider.Capability{
 			Feature:     f,
@@ -25,19 +35,22 @@ func buildCapabilities() provider.Table {
 		}
 	}
 
-	underDev(provider.FeatureCreate, "Lima supports this natively via limactl; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureStart, "Lima supports this natively via limactl; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureStop, "Lima supports this natively via limactl; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureDelete, "Lima supports this natively via limactl; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureList, "Lima supports this natively via limactl; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureStatus, "Lima supports this natively via limactl; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureExec, "Lima supports this natively via limactl shell; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureShell, "Lima supports this natively via limactl shell; agentctl's Lima backend isn't implemented yet.")
-	underDev(provider.FeatureView, "Lima has no first-class GUI console; agentctl plans a VNC bridge against the VM's own display, not yet built.")
-	underDev(provider.FeaturePortPublish, "Lima supports port forwarding natively (SSH/gRPC/AF_VSOCK); agentctl hasn't wired it up yet.")
-	underDev(provider.FeatureImagePull, "Lima has its own template registry; agentctl hasn't wired image pull up yet.")
+	supported(provider.FeatureCreate)
+	supported(provider.FeatureStart)
+	supported(provider.FeatureStop)
+	supported(provider.FeatureDelete)
+	supported(provider.FeatureList)
+	supported(provider.FeatureStatus)
+	supported(provider.FeatureExec)
+	supported(provider.FeatureShell)
+	supported(provider.FeaturePortPublish)
+
+	underDev(provider.FeatureView, "Lima has no first-class GUI console; agentctl plans a dedicated VNC bridge against the VM's own display, not yet built.")
 	underDev(provider.FeatureImageBuild, "agentctl hasn't wired a Lima cloud-init JIT build path up yet.")
 	underDev(provider.FeatureLogsExec, "agentctl hasn't wired exec history collection up yet.")
+
+	t[provider.FeatureImagePull] = notAvailable(provider.FeatureImagePull,
+		"Lima has no local named image store to pull into ahead of create; a template's base image resolves lazily, per-instance, inside create/start itself.")
 
 	t[provider.FeatureSnapshotCreate] = notAvailable(provider.FeatureSnapshotCreate,
 		"limactl snapshot is explicitly experimental/unstable upstream; agentctl won't build on it until it stabilizes.")
