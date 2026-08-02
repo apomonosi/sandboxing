@@ -19,7 +19,7 @@ So `agentctl view` never does raw X11 forwarding, on any provider. Instead:
 |---|---|
 | Incus | Native SPICE console (`incus console --type=vga`), talking directly to the VM's own virtual display |
 | Hyper-V | Native VMConnect / Enhanced Session Mode — the most mature console story of the three backends |
-| Lima | No first-class GUI console exists yet upstream; agentctl plans a dedicated VNC bridge against the VM's own display (not X11 forwarding) — see the capability matrix, currently `UnderDevelopment` |
+| Lima | The one remaining gap on an otherwise fully-implemented backend: no first-class GUI console exists yet upstream, so agentctl plans a dedicated VNC bridge against the VM's own display (not X11 forwarding) — see the capability matrix, currently `UnderDevelopment` |
 
 If you need to run an X application inside the sandbox for a legacy reason,
 run it against a **nested, isolated display inside the guest** (e.g. a Wayland

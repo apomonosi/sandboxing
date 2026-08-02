@@ -33,7 +33,7 @@ func (t Table) Get(f Feature) Capability // missing entry -> NotAvailable, never
 
 `AllFeatures` is the closed set every provider must cover; a table-
 completeness test (`internal/provider/capability_completeness_test.go`) runs
-against every provider package — including the Lima/Hyper-V stubs — and
+against every provider package — including Hyper-V's stub table — and
 fails if any `Feature` is missing an entry, so a newly added feature can't
 silently degrade to "unknown feature: not available" without someone
 noticing.
@@ -44,7 +44,8 @@ It matters which of these a `Capability` represents:
 
 - **`UnderDevelopment`**: the backend supports this fine; `agentctl`'s own
   integration just isn't built yet. This is the overwhelming majority of the
-  Lima and Hyper-V stub tables today — see the
+  Hyper-V stub table today, and a handful of remaining cells on Lima and
+  Incus (e.g. `view`, `logs.*`) — see the
   [capability matrix](../admin/capability-matrix.md) for exactly which cells
   these are.
 - **`NotAvailable` / `ManualWorkaround`**: the backend's platform genuinely
@@ -102,13 +103,13 @@ type CommandPreviewer interface {
 }
 ```
 
-A provider implements this only if it has real commands to show — Lima and
-Hyper-V don't yet, since they're stubs, so they simply don't implement it.
-Nothing special has to happen for that case: `internal/cli`'s `tryPreview`
-helper is only ever reached *after* the capability gate has already let the
-operation through, and on Lima/Hyper-V today the gate itself blocks with
-`UnderDevelopment` first — so `--preview` naturally has nothing to show
-there without any provider-specific handling.
+A provider implements this only if it has real commands to show — Incus and
+Lima both do now; Hyper-V doesn't yet, since it's still a stub, so it simply
+doesn't implement it. Nothing special has to happen for that case:
+`internal/cli`'s `tryPreview` helper is only ever reached *after* the
+capability gate has already let the operation through, and on Hyper-V today
+the gate itself blocks with `UnderDevelopment` first — so `--preview`
+naturally has nothing to show there without any provider-specific handling.
 
 **The one thing this design is built to guarantee: preview output cannot
 drift from what actually executes.** `internal/provider/incus/translate.go`
