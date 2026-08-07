@@ -12,6 +12,12 @@ what Lima itself does (`limactl start <existing-instance> --mount …` applies t
 an instance created earlier), and it is what makes one long-lived sandbox
 reusable across projects instead of forcing a VM per project.
 
+See `image-workflow.plan.md` for the layer above this one: the durable,
+reusable artifact is meant to be the **image** (toolchains, runtimes, the agent
+CLI — built once, shared across projects), with instances disposable and the
+mount naming the project directory for one boot. Mount policy is what makes a
+disposable instance useful without also making it a hole in the host.
+
 ## What exists today
 
 Mount policy already flows end to end, so this is an extension of an existing
