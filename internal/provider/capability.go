@@ -56,10 +56,17 @@ const (
 	FeatureNetworkACL      Feature = "network.acl"          // --allow / --allow-file egress allowlist
 	FeatureDenyLAN         Feature = "network.deny-lan"     // --deny-lan / --allow-lan
 	FeaturePortPublish     Feature = "network.port-publish" // --port host:guest
-	FeatureImagePull       Feature = "image.pull"
-	FeatureImageBuild      Feature = "image.build"
-	FeatureLogsNetwork     Feature = "logs.network"
-	FeatureLogsExec        Feature = "logs.exec"
+	FeatureMount           Feature = "fs.mount"             // --mount host directory shares
+	// FeatureMountReadOnly is deliberately separate from FeatureMount: a
+	// backend that mounts but silently ignores read-only gives the sandbox
+	// write access to host files while appearing to comply, which the user
+	// should hit the capability gate over rather than discover later. Same
+	// reasoning that makes network.deny-lan its own feature.
+	FeatureMountReadOnly Feature = "fs.mount.readonly"
+	FeatureImagePull     Feature = "image.pull"
+	FeatureImageBuild    Feature = "image.build"
+	FeatureLogsNetwork   Feature = "logs.network"
+	FeatureLogsExec      Feature = "logs.exec"
 )
 
 // AllFeatures is the closed set of every Feature a provider must have an
@@ -71,6 +78,7 @@ var AllFeatures = []Feature{
 	FeatureExec, FeatureShell, FeatureView,
 	FeatureSnapshotCreate, FeatureSnapshotList, FeatureSnapshotRestore, FeatureSnapshotDelete,
 	FeatureNetworkACL, FeatureDenyLAN, FeaturePortPublish,
+	FeatureMount, FeatureMountReadOnly,
 	FeatureImagePull, FeatureImageBuild,
 	FeatureLogsNetwork, FeatureLogsExec,
 }

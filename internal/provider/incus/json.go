@@ -1,6 +1,7 @@
 package incus
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,11 @@ type instanceJSON struct {
 	Profiles  []string          `json:"profiles"`
 	Config    map[string]string `json:"config"`
 	State     *instanceState    `json:"state"`
+	// Devices is the instance's *own* device map, deliberately not
+	// expanded_devices: profile-inherited devices must never be removed by
+	// a mount reconfigure, and agentctl only ever adds instance-local
+	// ones.
+	Devices map[string]map[string]string `json:"devices"`
 }
 
 type instanceState struct {
@@ -56,7 +62,32 @@ func toInstance(j instanceJSON) provider.Instance {
 			}
 		}
 	}
+	inst.Mounts = toMounts(j.Devices)
 	return inst
+}
+
+// toMounts reports the host directories agentctl has exposed to this
+// instance, read back from Incus's own device map rather than from the
+// profile that created it — mounts are sticky across boots, so the daemon
+// is the only honest source for what a sandbox can currently see.
+//
+// Only agentctl-managed devices are reported: a disk device the user
+// attached by hand isn't agentctl's to describe, and claiming it would
+// make `status` look like it manages more than it does.
+func toMounts(devices map[string]map[string]string) []provider.Mount {
+	var out []provider.Mount
+	for name, dev := range devices {
+		if !strings.HasPrefix(name, mountDevicePrefix) || dev["type"] != "disk" {
+			continue
+		}
+		out = append(out, provider.Mount{
+			HostPath:  dev["source"],
+			GuestPath: dev["path"],
+			Writable:  dev["readonly"] != "true",
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GuestPath < out[j].GuestPath })
+	return out
 }
 
 func toInstanceStatus(s string) provider.InstanceStatus {

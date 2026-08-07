@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -81,9 +82,8 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 		}
 	}
 
-	for i, m := range spec.Mounts {
-		devName := fmt.Sprintf("mount%d", i)
-		if _, _, err := p.run(ctx, buildMountDeviceArgs(spec.Name, devName, m)...); err != nil {
+	for _, m := range spec.Mounts {
+		if _, _, err := p.run(ctx, buildMountDeviceArgs(spec.Name, m)...); err != nil {
 			return nil, fmt.Errorf("adding mount %s: %w", m.GuestPath, err)
 		}
 	}
@@ -221,7 +221,17 @@ func (p *Provider) List(ctx context.Context) ([]provider.Instance, error) {
 }
 
 func (p *Provider) Status(ctx context.Context, name string) (*provider.Instance, error) {
-	stdout, _, err := p.run(ctx, "list", name, "--format", "json")
+	raw, err := p.inspect(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	inst := toInstance(*raw)
+	return &inst, nil
+}
+
+// inspect fetches one instance's full JSON, including its device map.
+func (p *Provider) inspect(ctx context.Context, name string) (*instanceJSON, error) {
+	stdout, _, err := p.run(ctx, buildListOneArgs(name)...)
 	if err != nil {
 		return nil, err
 	}
@@ -232,8 +242,41 @@ func (p *Provider) Status(ctx context.Context, name string) (*provider.Instance,
 	if len(raw) == 0 {
 		return nil, provider.ErrNotFound
 	}
-	inst := toInstance(raw[0])
-	return &inst, nil
+	return &raw[0], nil
+}
+
+// ApplyMountPolicy replaces the instance's agentctl-managed disk devices
+// with mounts. Incus binds a disk device's share at boot, so this is
+// called against a stopped instance immediately before Start.
+//
+// Remove-then-add rather than a diff: the set is small, the commands are
+// idempotent in effect, and a diff would have to reason about every disk
+// option Incus supports to decide whether an existing device still
+// matches. Only devices carrying mountDevicePrefix are removed, so a disk
+// device the user attached by hand survives untouched.
+func (p *Provider) ApplyMountPolicy(ctx context.Context, name string, mounts []provider.Mount) error {
+	raw, err := p.inspect(ctx, name)
+	if err != nil {
+		return err
+	}
+	existing := make([]string, 0, len(raw.Devices))
+	for devName := range raw.Devices {
+		if strings.HasPrefix(devName, mountDevicePrefix) {
+			existing = append(existing, devName)
+		}
+	}
+	sort.Strings(existing) // deterministic command order for tests and preview
+	for _, devName := range existing {
+		if _, _, err := p.run(ctx, buildMountDeviceRemoveArgs(name, devName)...); err != nil {
+			return fmt.Errorf("removing previous mount device %s: %w", devName, err)
+		}
+	}
+	for _, m := range mounts {
+		if _, _, err := p.run(ctx, buildMountDeviceArgs(name, m)...); err != nil {
+			return fmt.Errorf("adding mount %s: %w", m.GuestPath, err)
+		}
+	}
+	return nil
 }
 
 func (p *Provider) Exec(ctx context.Context, name string, opts provider.ExecOptions) (int, error) {

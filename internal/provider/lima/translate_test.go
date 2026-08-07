@@ -2,6 +2,7 @@ package lima
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
@@ -13,7 +14,7 @@ func TestBuildCreateArgs_Full(t *testing.T) {
 		Image:       "template://ubuntu-lts",
 		DefaultUser: "claude",
 		Resources:   provider.ResourceLimits{CPUCores: 2, Memory: "4GiB", DiskSize: "20GiB"},
-		Mounts:      []provider.Mount{{HostPath: "/host/ws", GuestPath: "/workspace", ReadOnly: true}},
+		Mounts:      []provider.Mount{{HostPath: "/host/ws", GuestPath: "/workspace"}},
 		Overrides: provider.NetworkPolicy{
 			Ports: []provider.PortPublish{{HostPort: 8080, GuestPort: 80, Protocol: "tcp"}},
 		},
@@ -26,6 +27,7 @@ func TestBuildCreateArgs_Full(t *testing.T) {
 		"--set", `.disk = "20GiB"`,
 		"--set", `.user.name = "claude"`,
 		"--set", `.user.sudo = true`,
+		"--set", `.mounts = []`,
 		"--set", `.mounts += [{"location": "/host/ws", "mountPoint": "/workspace", "writable": false}]`,
 		"--set", `.portForwards += [{"guestPort": 80, "hostPort": 8080, "proto": "tcp"}]`,
 		"template://ubuntu-lts",
@@ -64,8 +66,8 @@ func TestBuildCreateArgs_DefaultUsername_FallsBackToAgent(t *testing.T) {
 func TestBuildSetExpressions_Mounts(t *testing.T) {
 	spec := provider.InstanceSpec{
 		Mounts: []provider.Mount{
-			{HostPath: "/a", GuestPath: "/b", ReadOnly: false},
-			{HostPath: "/c", GuestPath: "/d", ReadOnly: true},
+			{HostPath: "/a", GuestPath: "/b", Writable: true},
+			{HostPath: "/c", GuestPath: "/d"},
 		},
 	}
 	got := buildSetExpressions(spec)
@@ -76,6 +78,64 @@ func TestBuildSetExpressions_Mounts(t *testing.T) {
 	}
 	if !containsExpr(got, wantReadOnly) {
 		t.Errorf("buildSetExpressions() = %v, want it to include %q", got, wantReadOnly)
+	}
+}
+
+// TestBuildMountExpressions_AlwaysResetsFirst is the regression test for
+// the isolation bug this whole feature exists to fix. spec.Image is a Lima
+// *template* name, and templates commonly mount the host home directory;
+// appending with `+=` alone silently inherited them, so a sandbox could
+// see all of $HOME while the docs promised otherwise.
+//
+// The reset must be emitted even for an empty mount set — that is the
+// --mount-none case, and the one where an inherited template mount would
+// be least expected.
+func TestBuildMountExpressions_AlwaysResetsFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mounts []provider.Mount
+	}{
+		{"no mounts", nil},
+		{"one mount", []provider.Mount{{HostPath: "/a", GuestPath: "/b"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildMountExpressions(tc.mounts)
+			if len(got) == 0 || got[0] != ".mounts = []" {
+				t.Fatalf("buildMountExpressions() = %v, want %q first", got, ".mounts = []")
+			}
+		})
+	}
+}
+
+// TestBuildSetExpressions_ResetPrecedesAppends guards the ordering: a
+// reset emitted after the appends would wipe the mounts it was supposed
+// to protect.
+func TestBuildSetExpressions_ResetPrecedesAppends(t *testing.T) {
+	got := buildSetExpressions(provider.InstanceSpec{
+		Mounts: []provider.Mount{{HostPath: "/a", GuestPath: "/b"}},
+	})
+	resetAt, appendAt := -1, -1
+	for i, expr := range got {
+		switch {
+		case expr == ".mounts = []":
+			resetAt = i
+		case strings.HasPrefix(expr, ".mounts +=") && appendAt == -1:
+			appendAt = i
+		}
+	}
+	if resetAt == -1 || appendAt == -1 || resetAt > appendAt {
+		t.Errorf("buildSetExpressions() = %v, want the .mounts reset before any append", got)
+	}
+}
+
+// TestBuildEditArgs_NeverPrompts pins --start=false: `limactl edit`
+// otherwise asks "Do you want to start the instance now?" on a TTY, and
+// ApplyMountPolicy runs unattended immediately before agentctl's own
+// Start.
+func TestBuildEditArgs_NeverPrompts(t *testing.T) {
+	got := buildEditArgs("demo", ".mounts = []")
+	if !containsExpr(got, "--start=false") {
+		t.Errorf("buildEditArgs() = %v, want it to include --start=false", got)
 	}
 }
 
@@ -105,7 +165,7 @@ func containsExpr(exprs []string, want string) bool {
 
 func TestBuildEditArgs(t *testing.T) {
 	got := buildEditArgs("demo", `.cpus = 2`)
-	want := []string{"edit", "--set", ".cpus = 2", "demo"}
+	want := []string{"edit", "--set", ".cpus = 2", "--start=false", "demo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildEditArgs() = %v, want %v", got, want)
 	}

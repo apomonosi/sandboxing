@@ -40,6 +40,10 @@ Creates an instance without starting it.
 | `--allow <domain[:port,port]>` | Egress allowlist entry (repeatable) |
 | `--deny-lan` / `--allow-lan` | Block (default) or allow LAN egress |
 | `--port <host:guest[/proto]>` | Publish a port (repeatable) |
+| `--mount <hostPath[:guestPath][:w\|:ro]>` | Expose a host directory, read-only unless `:w` (repeatable) |
+| `--mount-only <spec>` | Like `--mount`, but replaces the profile's mounts instead of adding to them |
+| `--mount-none` | Expose no host directories at all |
+| `--mount-writable` | Make every mount writable |
 | `--cpu-cores`, `--memory`, `--disk-size` | Resource overrides |
 | `--agent <name>` | Just-in-time install a coding agent (`claude`, `codex`, `opencode`, `pi`) — implies `start`; see [Agent Provisioning](agent-provisioning.md) |
 
@@ -48,9 +52,25 @@ Supports `--preview`/`--dry-run` (see [Preview Mode](preview-mode.md)); with
 `start` and the install step aren't previewed and don't run under
 `--preview` either, since preview returns before `create` actually executes.
 
-### `agentctl start <name>` / `agentctl stop <name> [--force] [--timeout <secs>]` / `agentctl delete <name> [--force]`
+### `agentctl start <name>`
 
-Standard lifecycle transitions. All three support `--preview`/`--dry-run`.
+Starts a stopped instance, and is also where a sandbox is rebound to a
+different project — mounts are a per-boot property.
+
+| Flag | Purpose |
+|---|---|
+| `--mount`, `--mount-only`, `--mount-none`, `--mount-writable` | Same as on `create`; rebinds the instance's host directories for this boot onward |
+| `--profile <name>` | Named profile whose `mountPolicy` constrains `--mount` (repeatable) |
+
+Mounts are **sticky**: passing no mount flag reuses whatever was applied last,
+rather than resetting the instance to its profile's defaults. The active set is
+printed on every start. See
+[Host filesystem access](profiles-and-policies.md#host-filesystem-access).
+
+### `agentctl stop <name> [--force] [--timeout <secs>]` / `agentctl delete <name> [--force]`
+
+Standard lifecycle transitions. Both support `--preview`/`--dry-run`, as does
+`start`.
 
 ### `agentctl list` (alias `ls`) / `agentctl status <name>`
 

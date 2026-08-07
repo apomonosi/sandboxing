@@ -26,6 +26,7 @@ func Validate(p *Profile) error {
 	errs = append(errs, validateNetwork(p.Spec.Network)...)
 	errs = append(errs, validateResources(p.Spec.Resources)...)
 	errs = append(errs, validateMounts(p.Spec.Mounts)...)
+	errs = append(errs, validateMountPolicy(p.Spec.MountPolicy)...)
 
 	return errors.Join(errs...)
 }
@@ -90,14 +91,38 @@ func validateResources(r Resources) []error {
 	return errs
 }
 
+// validateMounts checks what can be checked without touching the
+// filesystem. Everything path-dependent — expansion, symlink
+// canonicalization, allowed-root containment, overlap — happens in
+// ResolveMounts instead, because it needs the instance name and the real
+// filesystem, neither of which exists at profile-load time.
+//
+// guestPath is allowed to be empty here, unlike before: an omitted guest
+// path now defaults to the host path (Lima's own behavior), so requiring
+// it at load time would reject a valid profile.
 func validateMounts(mounts []Mount) []error {
 	var errs []error
 	for i, m := range mounts {
 		if strings.TrimSpace(m.HostPath) == "" {
 			errs = append(errs, fmt.Errorf("mounts[%d]: hostPath must not be empty", i))
 		}
-		if !path.IsAbs(m.GuestPath) {
+		if m.GuestPath != "" && !path.IsAbs(m.GuestPath) {
 			errs = append(errs, fmt.Errorf("mounts[%d]: guestPath %q must be absolute", i, m.GuestPath))
+		}
+	}
+	return errs
+}
+
+func validateMountPolicy(p MountPolicy) []error {
+	var errs []error
+	for i, root := range p.AllowedRoots {
+		if strings.TrimSpace(root) == "" {
+			errs = append(errs, fmt.Errorf("mountPolicy.allowedRoots[%d]: must not be empty", i))
+		}
+	}
+	for i, deny := range p.DenyPaths {
+		if strings.TrimSpace(deny) == "" {
+			errs = append(errs, fmt.Errorf("mountPolicy.denyPaths[%d]: must not be empty", i))
 		}
 	}
 	return errs

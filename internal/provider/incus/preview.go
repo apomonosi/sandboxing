@@ -41,8 +41,8 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 	if args := buildRootDiskResizeArgs(spec.Name, spec.Resources.DiskSize); args != nil {
 		cmds = append(cmds, cmd(args))
 	}
-	for i, m := range spec.Mounts {
-		cmds = append(cmds, cmd(buildMountDeviceArgs(spec.Name, fmt.Sprintf("mount%d", i), m)))
+	for _, m := range spec.Mounts {
+		cmds = append(cmds, cmd(buildMountDeviceArgs(spec.Name, m)))
 	}
 	for i, pp := range spec.Overrides.Ports {
 		cmds = append(cmds, cmd(buildPortProxyDeviceArgs(spec.Name, fmt.Sprintf("port%d", i), pp)))

@@ -25,6 +25,7 @@ func newCreateCmd() *cobra.Command {
 		memory    string
 		diskSize  string
 		agentName string
+		mounts    mountFlags
 	)
 
 	cmd := &cobra.Command{
@@ -107,6 +108,10 @@ func newCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			policy, err = mounts.apply(policy)
+			if err != nil {
+				return err
+			}
 
 			fp := forcePartial(cmd)
 			w := cmd.OutOrStdout()
@@ -126,7 +131,13 @@ func newCreateCmd() *cobra.Command {
 				}
 			}
 
-			instSpec := spec.ToInstanceSpec(name, resolvedImage, profileNames, policy)
+			instSpec, err := spec.ToInstanceSpec(name, resolvedImage, profileNames, policy, previewRequested(cmd))
+			if err != nil {
+				return err
+			}
+			if err := gateMounts(w, providerName, p, instSpec.Mounts, fp); err != nil {
+				return err
+			}
 			if agentName != "" {
 				instSpec.DefaultUser = agentName
 			}
@@ -141,6 +152,7 @@ func newCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			renderMounts(w, instSpec.Mounts, jsonOutput(cmd))
 
 			if agentName != "" {
 				if err := gateOrBlock(w, providerName, p.Capabilities().Get(provider.FeatureStart), fp); err != nil {
@@ -174,6 +186,7 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agentName, "agent", "", "just-in-time install a coding agent after create (valid: "+strings.Join(agent.Names(), ", ")+")")
 	cmd.Flags().StringVar(&memory, "memory", "", "override memory limit, e.g. 4GiB")
 	cmd.Flags().StringVar(&diskSize, "disk-size", "", "override root disk size, e.g. 20GiB")
+	mounts.register(cmd)
 
 	return cmd
 }

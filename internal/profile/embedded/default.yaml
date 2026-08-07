@@ -24,6 +24,11 @@ spec:
   mounts:
     - hostPath: "~/agentctl/workspaces/{{.Name}}"
       guestPath: "/workspace"
-      readOnly: false
+      writable: true
+  mountPolicy:
+    # Nothing of the host filesystem is exposed but the per-instance
+    # workspace below. Add --mount entries (or allowedRoots here) to widen
+    # that deliberately; $HOME itself is never mountable.
+    createMissing: true
   console:
     viewer: "spice"

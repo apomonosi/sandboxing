@@ -49,6 +49,21 @@ type Provider interface {
 	// independently of "can this provider create instances at all".
 	ApplyNetworkPolicy(ctx context.Context, name string, policy NetworkPolicy) error
 
+	// ApplyMountPolicy replaces the instance's agentctl-managed mount set,
+	// so `start --mount` can rebind a sandbox to a different project
+	// without recreating it. Pulled out as its own method for the same
+	// reason ApplyNetworkPolicy is: the mechanics diverge sharply per
+	// backend (Incus removes and re-adds disk devices; Lima folds the
+	// mount expressions into its own `start` invocation), and it needs
+	// capability-gating independently of "can this provider create
+	// instances at all".
+	//
+	// The instance is expected to be stopped: both backends bind mounts at
+	// boot, so callers apply this immediately before Start. Providers must
+	// only touch mounts agentctl itself added — a device or mount entry a
+	// user configured by hand is never removed.
+	ApplyMountPolicy(ctx context.Context, name string, mounts []Mount) error
+
 	// Images
 	ImagePull(ctx context.Context, ref string) error
 	ImageBuild(ctx context.Context, spec ImageBuildSpec) (string, error)
@@ -122,10 +137,15 @@ type ResourceLimits struct {
 	DiskSize string
 }
 
+// Mount is one host directory exposed inside the guest. Writable (rather
+// than the inverse) is the polarity throughout agentctl, matching Lima's
+// own `writable` field and its false-means-read-only default; the Incus
+// backend is the single place that negates it, since `incus config device
+// add` spells the same thing as `readonly=true`.
 type Mount struct {
-	HostPath  string
-	GuestPath string
-	ReadOnly  bool
+	HostPath  string `json:"host_path"`
+	GuestPath string `json:"guest_path"`
+	Writable  bool   `json:"writable"`
 }
 
 type ImageBuildSpec struct {
@@ -143,6 +163,12 @@ type Instance struct {
 	Profiles  []string       `json:"profiles"`
 	CreatedAt time.Time      `json:"created_at"`
 	IPs       []string       `json:"ips"`
+	// Mounts are the host directories currently exposed to this instance,
+	// read back from the backend rather than from the profile that created
+	// it — mounts are sticky across boots (see ApplyMountPolicy), so the
+	// backend is the only honest source for "what can this sandbox see
+	// right now".
+	Mounts []Mount `json:"mounts,omitempty"`
 }
 
 type InstanceStatus string

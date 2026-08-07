@@ -18,6 +18,13 @@ spec:
   mounts:
     - hostPath: "~/agentctl/workspaces/{{.Name}}"
       guestPath: "/workspace"
-      readOnly: false
+      writable: true
+  mountPolicy:
+    # The per-instance workspace is the only host directory this profile
+    # will expose: allowedRoots confines every --mount to it, so an ad-hoc
+    # create cannot reach the rest of the filesystem.
+    allowedRoots:
+      - "~/agentctl/workspaces"
+    createMissing: true
   console:
     viewer: "spice"

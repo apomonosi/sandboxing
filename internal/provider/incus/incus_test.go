@@ -33,6 +33,9 @@ type fakeRunner struct {
 	userConfigValue     string
 	agentConfigValue    string
 	agentInstalledValue string
+	// listJSON overrides the canned `incus list` response, for tests that
+	// need the instance to report devices (see ApplyMountPolicy).
+	listJSON string
 }
 
 func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
@@ -44,6 +47,9 @@ func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]by
 		return nil, []byte("Error: " + agentNotRunningMsg), errors.New("exit status 1")
 	}
 	if len(args) > 0 && args[0] == "list" {
+		if f.listJSON != "" {
+			return []byte(f.listJSON), nil, nil
+		}
 		// Enough to satisfy Status()/List()'s JSON parsing so callers
 		// that chain a status query (e.g. Create's trailing lookup)
 		// succeed against this fake.

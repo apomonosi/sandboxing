@@ -44,6 +44,11 @@ func buildCapabilities() provider.Table {
 	supported(provider.FeatureExec)
 	supported(provider.FeatureShell)
 	supported(provider.FeaturePortPublish)
+	// Lima's mounts are a first-class part of its instance config, and
+	// `writable: false` — its own default — is enforced by whichever mount
+	// backend is in use, so both mount features are genuinely native here.
+	supported(provider.FeatureMount)
+	supported(provider.FeatureMountReadOnly)
 
 	underDev(provider.FeatureView, "Lima has no first-class GUI console; agentctl plans a dedicated VNC bridge against the VM's own display, not yet built.")
 	underDev(provider.FeatureImageBuild, "agentctl hasn't wired a Lima cloud-init JIT build path up yet.")

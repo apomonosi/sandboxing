@@ -43,12 +43,70 @@ spec:
   mounts:
     - hostPath: "~/agentctl/workspaces/{{.Name}}"
       guestPath: "/workspace"
-      readOnly: false
+      writable: true
+  mountPolicy:
+    createMissing: true
 ```
 
 `hostPath` supports `~` expansion and a `{{.Name}}` template substituted with
 the instance name — the built-in profiles use this so each instance gets its
 own workspace directory automatically.
+
+## Host filesystem access
+
+**A sandbox sees nothing of your filesystem except the directories you name.**
+Out of the box that is one directory: the per-instance workspace above.
+`writable` defaults to `false`, so a directory is read-only unless you say
+otherwise, and `$HOME` itself can never be mounted.
+
+Name directories with `--mount`, on `create` or on `start`:
+
+```console
+$ agentctl create demo --image=… --mount ~/src/project:/workspace:w
+$ agentctl start demo --mount ~/src/other:/workspace    # read-only
+$ agentctl start demo --mount-none                       # no host access at all
+```
+
+The syntax is `hostPath[:guestPath][:w|:ro]`. Omit the guest path and it
+defaults to the host path; omit the suffix and the mount is read-only. This
+mirrors Lima's own `--mount`, `--mount-only`, `--mount-none` and
+`--mount-writable` flags.
+
+### One sandbox, many projects
+
+Mounts apply per boot, so a single sandbox can be rebound to a different
+project instead of building one VM per project:
+
+```console
+$ agentctl create work --image=…                          # no project bound to it
+$ agentctl start work --mount ~/src/alpha:/workspace:w
+$ agentctl stop work
+$ agentctl start work --mount ~/src/beta:/workspace:w     # same VM, new project
+```
+
+The guest path stays `/workspace`, so tooling inside the guest doesn't need to
+know which project it's looking at. Mounts are **sticky**: a bare `agentctl
+start work` reuses whatever was applied last. Because of that, `start` and
+`status` always print the directories currently exposed — a sticky mount you've
+forgotten about is exactly the failure worth making visible.
+
+### Constraining what may be mounted (for admins)
+
+`mountPolicy` bounds which host directories anyone may name. No CLI flag can
+widen it, and layering profiles can only ever tighten it:
+
+```yaml
+spec:
+  mountPolicy:
+    allowedRoots: ["~/src", "~/agentctl/workspaces"]
+    denyPaths: ["~/src/production-secrets"]
+    createMissing: true
+```
+
+Credentials directories (`~/.ssh`, `~/.aws`, `~/.kube`, …) and the backends'
+own state directories are refused regardless of configuration — see the
+[Profile Schema](../reference/profile-schema.md#mount-policy) for the full
+resolution order.
 
 ## Default non-root user
 

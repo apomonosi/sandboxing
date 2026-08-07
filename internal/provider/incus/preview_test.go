@@ -53,7 +53,7 @@ func TestPreviewCreate_NoNetworkAllowRules(t *testing.T) {
 	}
 	for _, want := range []string{
 		"config device override demo root size=20GiB",
-		"config device add demo mount0 disk source=/host/ws path=/workspace",
+		"config device add demo " + mountDeviceName("/workspace") + " disk source=/host/ws path=/workspace readonly=true",
 		"config device add demo port0 proxy listen=tcp:0.0.0.0:8080 connect=tcp:127.0.0.1:80",
 		"network acl rule add agentctl-demo egress action=reject destination=10.0.0.0/8",
 		"config device override demo eth0 security.acls=agentctl-demo",

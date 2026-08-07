@@ -1,7 +1,15 @@
 # Host Filesystem Access — Named Directories Only (Plan, Not Yet Implemented)
 
-**Status:** Design plan only. No code has been written for any of this. The
-goal: a sandbox sees **nothing** of the host filesystem except directories
+**Status: implemented for Incus and Lima.** Phases 0–3 below have landed:
+`--mount`/`--mount-only`/`--mount-none`/`--mount-writable` on `create` and
+`start`, `ResolveMounts`, `mountPolicy`, the `fs.mount`/`fs.mount.readonly`
+capability features, and mount reporting in `status`. **Hyper-V remains
+documented-only** — it ships the `ManualWorkaround` SMB procedure described
+below, and the native reverse-SFTP design is deliberately not built, since the
+Hyper-V backend's own lifecycle is still a stub. This file is kept as the
+rationale record; the code is the source of truth for behavior.
+
+The goal: a sandbox sees **nothing** of the host filesystem except directories
 explicitly named when the VM is created **or started**, with an
 admin-controllable allowlist of which host directories may be named at all. The
 CLI/YAML surface should read like Lima's and Incus's own, not like a third
