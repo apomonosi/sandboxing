@@ -18,6 +18,36 @@ CLI — built once, shared across projects), with instances disposable and the
 mount naming the project directory for one boot. Mount policy is what makes a
 disposable instance useful without also making it a hole in the host.
 
+## Decisions taken
+
+Settled; the rest of this document reflects them rather than presenting them as
+options.
+
+1. **`writable`, not `readOnly`.** The YAML field is renamed for exact Lima
+   parity, and the Go field follows (`Mount.Writable`). Default `false` =
+   read-only, matching Lima's builtin default. This is a breaking schema change
+   and profiles are strict-decoded, so every existing profile fails to load
+   loudly — acceptable in early development, and the loud failure is the point.
+   The `hostPath`/`guestPath` names stay: Lima calls them `location`/
+   `mountPoint`, Incus calls them `source`/`path`, so there is no single parity
+   to match, and the existing names say which side is which.
+2. **`--mount` parses from the right**, so Windows drive letters survive. See
+   the grammar below.
+3. **Start-time mounts are sticky**, following `limactl start --mount`. The
+   stored set is rewritten and reused by a later bare `start`; `start` and
+   `status` always print the active mount set so a stale mount is never
+   invisible.
+4. **The per-instance workspace stays the default; `$HOME` is never mounted.**
+   `~/agentctl/workspaces/{{.Name}}` → `/workspace` remains in the built-in
+   profiles, and `$HOME`, `/`, and system directories are refused by the
+   resolver by default rather than only when a profile opts out. This is
+   specifically what Lima does *not* do today (gap #1).
+5. **Guest-side ownership** is an implementation detail to settle empirically in
+   Phase 1's integration tests, not a design question.
+6. **Incus `readonly=true` on VM shares** is likewise a test assertion, not a
+   blocker: the integration test asserts a write to a read-only share fails, and
+   the capability entry is written to match whatever it finds.
+
 ## What exists today
 
 Mount policy already flows end to end, so this is an extension of an existing
@@ -25,7 +55,7 @@ path, not a new subsystem:
 
 | Layer | File | What it does today |
 |---|---|---|
-| Profile YAML | `internal/profile/schema.go` | `Mount{HostPath, GuestPath, ReadOnly}`, list field `spec.mounts` |
+| Profile YAML | `internal/profile/schema.go` | `Mount{HostPath, GuestPath, ReadOnly}`, list field `spec.mounts` — `ReadOnly` becomes `Writable` (decision 1) |
 | Merge | `internal/profile/merge.go` | `Mounts` is an **additive union** (base then override) |
 | Validation | `internal/profile/validate.go` | `hostPath` non-empty, `guestPath` absolute — that is all |
 | Spec → provider | `internal/spec/spec.go` | `profile.ToProviderMounts` → `provider.InstanceSpec.Mounts` |
@@ -110,17 +140,35 @@ $ agentctl create demo --image=… --mount-only ~/scratch:w   # ignore profile m
 $ agentctl create demo --image=… --mount ~/src --mount-writable
 ```
 
-Parsing rules for `--mount` (new `parseMountFlag` in `internal/cli/flags.go`,
-same shape as the existing `parsePortFlag`/`parseAllowFlag`):
+Grammar for `--mount` (new `parseMountFlag` in `internal/cli/flags.go`, same
+shape as the existing `parsePortFlag`/`parseAllowFlag`), **parsed right to
+left** so Windows drive letters survive (decision 2):
 
-- Split on `:`. A trailing `w` or `ro` token sets writability; everything
-  before is `hostPath[:guestPath]`.
-- One path only → `guestPath` defaults to `hostPath` **after expansion**,
-  matching Lima's documented "mountPoint builtin default: value of location".
-- No suffix → **read-only**, matching Lima's `writable` builtin default of
-  `false` and the safer default for a sandbox. `:w` is always explicit.
-- Repeatable; accumulates on top of profile mounts, exactly like `--allow` and
-  `--port` do today.
+1. If the last `:`-delimited token is exactly `w` or `ro`, it sets writability
+   and is stripped. Anything else is part of a path.
+2. Of what remains, if there is a `:` whose right-hand side **starts with `/`**,
+   that is the `guestPath` and everything to its left is the `hostPath`. Guest
+   paths are always absolute Linux paths — agentctl guests are Linux on every
+   backend — so a leading `/` is an unambiguous marker that a Windows host path
+   can never produce.
+3. Otherwise the whole remainder is the `hostPath`, and `guestPath` defaults to
+   the host path **after expansion**, matching Lima's documented "mountPoint
+   builtin default: value of location".
+
+That makes all of these parse correctly:
+
+```
+~/src/project                      host=~/src/project      guest=(same)     ro
+~/src/project:w                    host=~/src/project      guest=(same)     rw
+~/src/project:/workspace           host=~/src/project      guest=/workspace ro
+C:\Users\me\src:/workspace:w       host=C:\Users\me\src    guest=/workspace rw
+C:\Users\me\src                    host=C:\Users\me\src    guest=(same)     ro
+```
+
+No suffix means **read-only**, matching Lima's `writable` builtin default of
+`false` and the safer default for a sandbox; `:w` is always explicit.
+Repeatable, and accumulates on top of profile mounts exactly like `--allow` and
+`--port` do today.
 
 Flag semantics map onto the existing merge model:
 
@@ -129,7 +177,7 @@ Flag semantics map onto the existing merge model:
 | `--mount` | appended to the profile's `mounts` (Merge's additive rule, unchanged) |
 | `--mount-only` | replaces the profile's `mounts` entirely (Lima's own verb for this) |
 | `--mount-none` | resolved mount list is empty; no host path is exposed at all |
-| `--mount-writable` | sets `readOnly: false` on every resolved mount; prints a warning line |
+| `--mount-writable` | sets `writable: true` on every resolved mount; prints a warning line |
 
 ### The same flags on `start`
 
@@ -146,6 +194,15 @@ $ agentctl start work --mount-none                        # boot with no host ac
 
 The guest path stays `/workspace` across projects, so tooling inside the guest
 does not have to know which project it is looking at.
+
+Mounts are **sticky** (decision 3): each `start --mount …` rewrites the stored
+set, and a later bare `agentctl start work` reuses whatever was last applied —
+the same behavior `limactl start --mount` has, and it needs no agentctl-side
+state because both backends already persist the mount set (Lima's instance
+YAML, Incus's device list). The safety cost of stickiness is that a bare
+`start` months later silently re-exposes a directory the user has forgotten
+about, so it is paid down by making the set impossible to miss: `start` prints
+the mount set it applied, and `status` always lists it.
 
 This is not agentctl inventing a verb: `limactl start <name> --mount …` on an
 already-created instance is exactly Lima's own behavior — `start.go`'s
@@ -179,7 +236,7 @@ spec:
   mounts:
     - hostPath: "~/agentctl/workspaces/{{.Name}}"
       guestPath: /workspace
-      readOnly: false
+      writable: true               # renamed from readOnly; default false
   mountPolicy:
     allowedRoots:                  # a mount must resolve under one of these
       - "~/src"
@@ -190,10 +247,19 @@ spec:
       - "~/.gnupg"
       - "~/.kube"
       - "~/.config/agentctl"
-    allowHome: false               # refuse to mount $HOME, /, or system dirs
-    defaultReadOnly: true
+    allowHome: false               # default; true is the deliberate escape hatch
     createMissing: true            # mkdir 0700 a missing hostPath
 ```
+
+Note `defaultReadOnly` is gone — with the polarity flip there is exactly one
+default (`writable: false`) and it lives in the field's zero value, so a second
+knob restating it would only create a way for the two to disagree.
+
+`allowHome: false` is the **built-in default**, not merely the recommended
+setting (decision 4): `$HOME`, `/`, and system directories are refused by the
+resolver unless a profile explicitly sets `allowHome: true`. This is precisely
+the behavior Lima does not have today, and gap #1 is the proof that leaving it
+to configuration is not enough.
 
 Merge rule for `mountPolicy`, to be stated explicitly in
 `docs/reference/profile-schema.md`: **overrides may narrow, never widen.**
@@ -234,8 +300,12 @@ does so an author sees the full list in one pass:
    otherwise a clear agentctl error rather than the backend's (Incus's disk
    device defaults to `required=true`, so it would fail at device-add anyway,
    with a worse message).
-5. **Deny checks**: `/`, `$HOME` itself unless `allowHome`, anything under
-   `denyPaths`, plus the hard-coded provider-state paths above.
+5. **Deny checks**: `/` and `$HOME` itself — refused by default, allowed only
+   when a profile sets `allowHome: true` — plus anything under `denyPaths` and
+   the hard-coded provider-state paths above. The per-instance workspace
+   (`~/agentctl/workspaces/<name>`) is *under* `$HOME` and stays perfectly
+   legal: the rule denies mounting the home directory itself, not everything
+   inside it.
 6. **Containment**: `filepath.Rel(root, path)` must not start with `..`, with an
    explicit separator-boundary check so `/home/u/srcevil` does not match root
    `/home/u/src`. Empty `allowedRoots` means unconstrained — preserving today's
@@ -283,16 +353,17 @@ Per-provider entries:
   enforced by the mount backend). Worth recording that upstream discourages
   `writable: true` with `reverse-sshfs`; Lima ≥1.0 resolves the default mount
   type to 9p (QEMU) or virtiofs (vz), so this is mostly a non-issue.
-- **Hyper-V** — `NotAvailable`/`ManualWorkaround` with a `Plan` string (host SMB
-  share + guest credential mapping); there is no virtiofs-equivalent primitive
-  to wire up, so this is a genuine platform gap, not unfinished wiring.
+- **Hyper-V** — `ManualWorkaround` with an SMB `Plan` string for now; see the
+  dedicated section below, because this is the one backend with no host-side
+  share primitive at all and it is the platform a large share of users will be
+  on.
 
 **Gate in `internal/cli/create.go` and `internal/cli/start.go`**, alongside the
 existing DenyLAN/ACL/Port gates:
 
 ```go
 if len(policy.Mounts) > 0            { gateOrBlock(…, FeatureMount, fp) }
-if anyReadOnly(policy.Mounts)        { gateOrBlock(…, FeatureMountReadOnly, fp) }
+if anyNonWritable(policy.Mounts)     { gateOrBlock(…, FeatureMountReadOnly, fp) }
 ```
 
 `start.go` today is a thin `p.Start(ctx, name)` wrapper with no flags of its
@@ -354,6 +425,111 @@ add|list|remove`). Incus can plausibly do it — the incus-agent mounts a
 hot-plugged share — but it is unverified against a live daemon, and Lima cannot
 do it at all without a restart, so it should not gate the start-time design.
 
+## Hyper-V: no host-side share primitive at all
+
+Incus and Lima both hand the guest a filesystem over a hypervisor channel
+(virtiofs/9p, or Lima's reverse-sshfs). **Hyper-V has no equivalent.** There is
+no virtiofs, no 9p, and no VMware-Tools-style shared-folder feature; Enhanced
+Session Mode's drive redirection is RDP-based and aimed at Windows guests, not
+something agentctl can drive for a Linux guest. For a Linux guest the options
+reduce to three:
+
+- **SMB/CIFS over the guest network** — the standard, documented answer.
+- **`Copy-VMFile`** over the Guest Service Interface — one-way host → guest, a
+  copy rather than a mount, and it needs the Hyper-V guest daemons present in
+  the image.
+- **Attach a VHDX** as a block device — real storage, but not a host directory.
+
+### The cross-feature consequence: mounts become network traffic
+
+This is the part worth deciding deliberately rather than discovering during
+implementation. On Hyper-V, every option that produces a *live* mount requires
+the guest to reach a service **on the host**, which runs straight into
+`--deny-lan`, on by default. The Hyper-V Default Switch is a NAT switch handing
+out RFC1918 addresses (172.x, with the subnet documented to change across host
+reboots), and an Internal switch is typically 192.168.x — both squarely inside
+the ranges `denyLAN` blocks.
+
+So on Hyper-V, "mount a directory" and "block the LAN" are in direct tension in
+a way they are not on the other two backends. The answer is not to drop either:
+it is to make the exception narrow, explicit and visible — a single allow rule
+for the host's own vSwitch address on the single port required, emitted as part
+of applying mount policy and surfaced in `status` and `--preview` exactly like
+any `--allow` entry. What must not happen is a mount silently widening the
+network policy. This also means `fs.mount` on Hyper-V has a real dependency on
+`network.acl` being implemented there, which it is not yet.
+
+### Three candidate designs
+
+**A. SMB share — ship as the `ManualWorkaround` Plan string now.**
+`New-SmbShare -Name agentctl-<inst> -Path <hostdir>`, guest mounts
+`mount -t cifs //<host-ip>/agentctl-<inst> /workspace`. Well-trodden and real.
+Costs: a credential has to reach the guest, and a sandbox holding host SMB
+credentials is itself a lateral-movement primitive (NTLM relay is the classic
+abuse) — which is uncomfortably close to the threat `docs/admin/security-model.md`
+says the tool exists to prevent. Read-only has to come from the share ACL rather
+than a mount flag. Good as a documented manual procedure; poor as an automated
+default.
+
+**B. Reverse-SFTP served by agentctl — the recommended native path.**
+Exactly what Lima does by default (`reverse-sshfs`): the *host* runs the file
+server and the guest mounts it over SSH. agentctl would embed one (Go's
+`pkg/sftp` over `x/crypto/ssh`), bound to the vSwitch address only, authenticated
+with a per-instance keypair, **serving only the named directories as its
+filesystem roots**.
+
+The reason to prefer this is not convenience. It is that the named-directory
+restriction stops being a configuration assertion and becomes structural: with
+Incus and Lima, "only these directories" is a property of how the hypervisor was
+configured, and a different configuration would expose more. With a served root,
+the guest cannot *name* a path outside it — the server has no handle to hand
+back. Read-only becomes a server-side decision too, which sidesteps the "does
+the backend actually honor `readonly`?" question entirely. And it reuses a
+design with years of production use behind it in Lima rather than inventing one.
+
+Costs, stated plainly:
+
+- agentctl is a one-shot CLI. This requires a **host-side process living as long
+  as the VM**. Lima has `limactl`'s host agent for exactly this; agentctl has no
+  daemon concept at all. That is the largest architectural addition anywhere in
+  this plan.
+- Slower than virtiofs, and inotify/file-watching semantics differ — which
+  matters, because watch-mode build tools are exactly what runs in these
+  sandboxes.
+- Windows filesystem semantics leak through: case-insensitivity, ACLs instead of
+  POSIX modes, path-length limits.
+
+**C. VHDX workspace disk.** Attach a `.vhdx`; the guest formats and mounts it.
+No network, no credentials, strong isolation — but the host can only read it
+while the VM is stopped (`Mount-VHD`), so it cannot support "edit in my IDE on
+the host while the agent builds in the guest." Worth keeping in mind as a
+persistent *cache/scratch* volume (the build-cache question raised in
+`image-workflow.plan.md`), not as a project mount.
+
+### Recommendation and sequencing
+
+Ship **A** as the capability entry's `Plan` string, following the pattern
+`network.port-publish` already uses for Hyper-V's other genuine platform gap —
+the mechanism and the `Plan` field exist, so this costs almost nothing and stops
+agentctl from silently pretending. Design **B** as the native path, in **its own
+plan file**: a host-side daemon is a big enough architectural change that
+folding it into this plan's phases would be dishonest about the cost, and once
+it exists it may well be worth using on Lima and Incus too rather than staying a
+Hyper-V special case.
+
+Sequencing is constrained by something outside this plan: the Hyper-V backend is
+a stub in *every* respect — `create`/`start`/`stop` are all `UnderDevelopment`.
+Mounts cannot be usable there before the lifecycle is. So the capability entry
+and Plan string land with Phase 2, and B is gated behind the Hyper-V backend
+existing at all.
+
+**Verification note**, matching the convention `incus/translate.go` and
+`lima/translate.go` already follow: none of the Hyper-V specifics above have
+been exercised against a live Windows host in this environment. The Default
+Switch's changing subnet, `Copy-VMFile`'s guest-daemon requirements, and the
+exact SMB/cifs invocation all come from documentation and need confirming before
+anything is built on them.
+
 ## Introspection
 
 - Add `Mounts []Mount` to `provider.Instance` and populate it in `Status`:
@@ -381,19 +557,23 @@ per-provider), and `docs/user/preview-mode.md` (expanded paths).
 ## Testing
 
 - Table-driven unit tests for `parseMountFlag`, mirroring the existing
-  `parsePortFlag` tests: bare path, `:w`, `:ro`, explicit guest path, both,
-  and the malformed cases.
+  `parsePortFlag` tests: bare path, `:w`, `:ro`, explicit guest path, both, the
+  malformed cases, and specifically the Windows forms (`C:\Users\me\src`,
+  `C:\Users\me\src:/workspace:w`) that motivated right-to-left parsing.
 - `ResolveMounts` tests against a `t.TempDir()`: template/`~` expansion, symlink
   escape, `..` traversal, allowed-root boundary (`/src` vs `/srcevil`), deny
-  paths, `$HOME` and `/`, missing-directory creation with mode 0700, guest-path
-  collision, host and guest overlap.
+  paths, missing-directory creation with mode 0700, guest-path collision, host
+  and guest overlap. Two cases carry decision 4 specifically: mounting `$HOME`
+  is refused by default and permitted only under `allowHome: true`, and a path
+  *inside* `$HOME` (the per-instance workspace) is still allowed.
 - Merge tests for `mountPolicy`'s narrow-only rule, including the failure case
   where a later profile tries to widen `allowedRoots`.
 - Lima translate test: `.mounts = []` always emitted, and emitted first; the
   same expressions appear on the `start` invocation for an existing instance.
-- Incus translate test: `readonly=true` present/absent per `ReadOnly`; the
-  remove-then-add reconfigure sequence only touches `agentctl-mount-*` devices
-  and leaves a hand-added device alone.
+- Incus translate test: `readonly=true` emitted when `Writable` is false and
+  omitted when true (the one place the polarity is negated); the remove-then-add
+  reconfigure sequence only touches `agentctl-mount-*` devices and leaves a
+  hand-added device alone.
 - `capability_completeness_test.go` covers the new features for free.
 - Integration tests (`//go:build integration`): on Incus, create with one
   read-only and one writable mount, assert the file is visible in the guest and
@@ -419,50 +599,43 @@ forces one VM per project, which is the workflow question this design exists to
 answer.
 
 **Phase 2 — admin constraints.** `mountPolicy` in the profile schema, the two
-capability features, and the `create` gate.
+capability features, the `create`/`start` gates, and Hyper-V's
+`ManualWorkaround` entry with its SMB Plan string.
 
 **Phase 3 — visibility.** `provider.Instance.Mounts`, `status` output, doc
 updates, integration tests.
 
-## Open questions to resolve before implementation
+## To settle during implementation
 
-1. **Read-only default vs. the existing field.** Lima's default is
-   `writable: false`; agentctl's `Mount.ReadOnly bool` zero value means
-   *writable*, so a YAML author who omits the field gets the opposite of Lima's
-   default. Either (a) keep `readOnly` and change only the CLI flag's default
-   (non-breaking, but YAML and flag disagree), or (b) rename the YAML field to
-   `writable` for exact Lima parity — a breaking schema change, and profiles are
-   parsed with `KnownFields(true)`, so every existing profile fails to load
-   loudly rather than silently. (a) is the safer default; (b) is the cleaner
-   API. Needs a call.
-2. **Windows path parsing.** `--mount C:\src:/workspace:w` collides with `:` as
-   the delimiter. Options: parse from the right (like `parsePortFlag` handles
-   `/proto`), require the profile YAML form on Windows, or accept a `=`
-   separator variant. Hyper-V is a stub today, so this can be deferred — but the
-   flag grammar should not have to change later.
-3. **Do start-time mounts stick, or last one boot?** Both backends store the
-   mount set natively (Lima's instance YAML, Incus's device list), so the
-   zero-extra-state option is **sticky**: `start --mount ~/src/alpha` rewrites
-   the stored set, and a later bare `agentctl start work` reuses it. That
-   matches `limactl start --mount` exactly. The alternative is **per-boot**:
-   clear the mount set on `stop`, so a bare `start` exposes nothing and every
-   boot must name its directories. Sticky is the better API fit; per-boot is
-   the safer default, because a sticky mount means a bare `start` months later
-   silently re-exposes a directory the user has forgotten about. A middle
-   option: sticky storage, but `status` and `start`'s own output always print
-   the mount set, so it is never invisible. Needs a call — this is the one
-   decision that changes what a bare `agentctl start` grants.
-4. **Default when nothing is specified.** Keep the built-ins' per-instance
-   `~/agentctl/workspaces/{{.Name}}` → `/workspace` mount (ergonomic, already
-   instance-scoped), with `--mount-none` as the zero-access switch? Or default
-   to no mounts at all and make the workspace opt-in? Recommendation: keep it,
-   since it is per-instance and is what makes the sandbox useful.
-5. **Guest-side ownership.** A virtiofs/9p share lands with some uid/gid; the
-   provisioned non-root `agent` user must be able to read (and for writable
-   mounts, write) it. Whether that needs a mount option, a `chown` in the
-   bootstrap script, or is handled by the backend differs per provider and is
-   unverified — settle it in the Phase 3 integration tests rather than guessing
-   in the design.
-6. **Does Incus enforce `readonly=true` on VM shares?** Blocks the
-   `fs.mount.readonly` capability entry for Incus (see above). Verify against a
-   live daemon.
+Not design questions — things the code will answer, recorded so they are not
+forgotten.
+
+1. **Guest-side ownership.** A virtiofs/9p share lands with some uid/gid; the
+   provisioned non-root `agent` user must be able to read it, and write it for
+   writable mounts. Whether that needs a mount option, a `chown` in
+   `bootstrap-user.sh`, or is handled by the backend differs per provider.
+   Answer it with the Phase 1 integration tests rather than guessing.
+2. **Whether Incus enforces `readonly=true` on VM shares.** The disk device's
+   `readonly` option is documented without a container-only condition, but VM
+   shares go through virtiofs/9p and this has not been verified live. The
+   integration test asserts a write to a read-only share fails; the
+   `fs.mount.readonly` capability entry is then written to match — `Supported`
+   if it holds, `ManualWorkaround` ("mount the source read-only on the host
+   first") if it does not.
+3. **Lima's `.mounts` reset syntax.** Lima's own `--mount-none` emits
+   `.mounts = null`; `.mounts = []` should be equivalent for the subsequent
+   `+=` appends, but which one the bundled yq dialect prefers needs confirming
+   against a live `limactl` — the same caveat `lima/translate.go`'s package NOTE
+   already carries for the whole `--set` mechanism.
+
+## Remaining open question
+
+**Hyper-V's native path — design B (host-side reverse-SFTP) as its own plan, or
+something else?** Everything else here is decided. This one is open because it
+introduces a host-side daemon to a tool that has been a one-shot CLI, and
+because the answer plausibly changes the other two backends too (a served root
+enforces the named-directory restriction structurally, in a way virtiofs
+configuration does not). The recommendation is to write it up separately rather
+than fold it into this plan's phases — but whether Windows support waits on that
+daemon, or ships on the SMB manual workaround for a release or two, is a
+scheduling call worth making explicitly.

@@ -1,6 +1,9 @@
 # Image → Instance → Mount: the Docker-shaped Workflow (Plan, Not Yet Implemented)
 
-**Status:** Design plan only. No code has been written for any of this. Grew out
+**Status:** Design plan only, **shelved** — parked deliberately while
+`filesystem-access.plan.md` is worked through first. The two findings in the
+"Findings in the current code" section below are live bugs regardless and do not
+depend on any of this being built. Grew out
 of a question about whether a sandbox has to be created per project, or whether
 a pre-equipped template image plus disposable instances is the better model.
 Companion to `filesystem-access.plan.md` (mounts) and `lima-images.plan.md`
