@@ -2,9 +2,15 @@
 
 **Status:** Design plan only. No code has been written for any of this. The
 goal: a sandbox sees **nothing** of the host filesystem except directories
-explicitly named at create time, with an admin-controllable allowlist of which
-host directories may be named at all. The CLI/YAML surface should read like
-Lima's and Incus's own, not like a third dialect.
+explicitly named when the VM is created **or started**, with an
+admin-controllable allowlist of which host directories may be named at all. The
+CLI/YAML surface should read like Lima's and Incus's own, not like a third
+dialect.
+
+Mounts are a **per-boot** property, not a per-instance-lifetime one. That is
+what Lima itself does (`limactl start <existing-instance> --mount …` applies to
+an instance created earlier), and it is what makes one long-lived sandbox
+reusable across projects instead of forcing a VM per project.
 
 ## What exists today
 
@@ -118,6 +124,35 @@ Flag semantics map onto the existing merge model:
 | `--mount-only` | replaces the profile's `mounts` entirely (Lima's own verb for this) |
 | `--mount-none` | resolved mount list is empty; no host path is exposed at all |
 | `--mount-writable` | sets `readOnly: false` on every resolved mount; prints a warning line |
+
+### The same flags on `start`
+
+`agentctl start` takes the identical flag set, and this is the primary
+workflow for a sandbox reused across projects:
+
+```console
+$ agentctl create work --image=…            # created once, no project bound to it
+$ agentctl start work --mount ~/src/alpha:/workspace:w
+$ agentctl stop work
+$ agentctl start work --mount ~/src/beta:/workspace:w    # same VM, different project
+$ agentctl start work --mount-none                        # boot with no host access
+```
+
+The guest path stays `/workspace` across projects, so tooling inside the guest
+does not have to know which project it is looking at.
+
+This is not agentctl inventing a verb: `limactl start <name> --mount …` on an
+already-created instance is exactly Lima's own behavior — `start.go`'s
+`loadOrCreateInstance` detects the existing instance, logs `Using the existing
+instance …`, and applies the edit flags' yq expressions to it via
+`applyYQExpressionToExistingInstance`. Only `limactl edit` refuses on a live
+instance (`cannot edit a running instance`), and `agentctl start` operates on a
+stopped instance by definition, so that restriction never binds.
+
+Mount policy is re-resolved and re-validated on every start — `allowedRoots`,
+`denyPaths` and the symlink canonicalization all run again, so a profile
+tightened after the instance was created takes effect at the next boot rather
+than being frozen at create time.
 
 `--mount-type` and `--mount-inotify` are deliberately **out of scope**: they are
 Lima-only performance/tuning knobs with no Incus analogue, and neither changes
@@ -246,13 +281,18 @@ Per-provider entries:
   share + guest credential mapping); there is no virtiofs-equivalent primitive
   to wire up, so this is a genuine platform gap, not unfinished wiring.
 
-**Gate in `internal/cli/create.go`**, alongside the existing DenyLAN/ACL/Port
-gates:
+**Gate in `internal/cli/create.go` and `internal/cli/start.go`**, alongside the
+existing DenyLAN/ACL/Port gates:
 
 ```go
 if len(policy.Mounts) > 0            { gateOrBlock(…, FeatureMount, fp) }
 if anyReadOnly(policy.Mounts)        { gateOrBlock(…, FeatureMountReadOnly, fp) }
 ```
+
+`start.go` today is a thin `p.Start(ctx, name)` wrapper with no flags of its
+own, so it also needs the profile-resolution plumbing `create` already has
+(`--profile`, `--profile-dir`, `spec.ResolvePolicy`) in order to re-apply
+`mountPolicy` on each boot.
 
 **Lima translate change — the actual isolation fix (gap #1).**
 `buildSetExpressions` must emit a reset expression **unconditionally**, before
@@ -274,6 +314,40 @@ emits `source=`/`path=`/`readonly=true`. Optionally pass `required=true`
 explicitly for self-documenting preview output. Do not emit `shift=` (a no-op
 for VMs) or `recursive=`.
 
+### Reconfiguring mounts at start
+
+A new `Provider` method, capability-gated like `ApplyNetworkPolicy` and for the
+same reason (it is the operation whose mechanics diverge most between
+backends):
+
+```go
+// ApplyMountPolicy replaces the instance's agentctl-managed mount set.
+// Called by `start` when any --mount flag is present; the instance is
+// stopped at that point.
+ApplyMountPolicy(ctx context.Context, name string, mounts []Mount) error
+```
+
+- **Lima**: fold the mount expressions into the `start` invocation itself —
+  `limactl start --set '.mounts = []' --set '.mounts += [...]' <name>`, or the
+  editflags equivalent (`--mount-only`/`--mount-none`). One command, no separate
+  reconfigure step, and it is the same `buildSetExpressions` builder `create`
+  already uses. `buildStartArgs(name)` grows a mounts parameter.
+- **Incus**: `incus config device remove <name> <dev>` for each
+  agentctl-managed mount device, then `config device add` for the new set, then
+  `incus start`. This requires **deterministic, agentctl-owned device names** —
+  the current index-derived `mount0`/`mount1` scheme cannot distinguish "a
+  device agentctl added last boot" from one the user added by hand. Name them
+  from a fixed prefix plus a hash of the guest path (e.g.
+  `agentctl-mount-<8-hex>`), and only ever remove devices matching that prefix.
+  This subsumes the stable-naming point in the resolution pipeline above.
+- **Hyper-V**: inherits whatever `fs.mount` says — `NotAvailable` today.
+
+Hot-attaching to an *already running* instance is a separate, later feature
+(`agentctl mount add|list|remove`, mirroring `incus config device
+add|list|remove`). Incus can plausibly do it — the incus-agent mounts a
+hot-plugged share — but it is unverified against a live daemon, and Lima cannot
+do it at all without a restart, so it should not gate the start-time design.
+
 ## Introspection
 
 - Add `Mounts []Mount` to `provider.Instance` and populate it in `Status`:
@@ -290,8 +364,10 @@ for VMs) or `recursive=`.
 
 `docs/reference/profile-schema.md` (the `mountPolicy` block, resolution and
 merge rules), `docs/user/profiles-and-policies.md` (a "Host filesystem access"
-section: nothing is exposed but what you name), `docs/user/cli-reference.md`
-(the four new flags), `docs/admin/capability-matrix.md` (two new rows),
+section: nothing is exposed but what you name, plus a worked
+one-sandbox-many-projects example), `docs/user/cli-reference.md` (the four new
+flags, on both `create` and `start` — `start`'s entry currently lists no flags
+at all), `docs/admin/capability-matrix.md` (two new rows),
 `docs/admin/security-model.md` (a new section stating plainly that a writable
 mount is a two-way channel out of the sandbox and that read-only enforcement is
 per-provider), and `docs/user/preview-mode.md` (expanded paths).
@@ -307,14 +383,20 @@ per-provider), and `docs/user/preview-mode.md` (expanded paths).
   collision, host and guest overlap.
 - Merge tests for `mountPolicy`'s narrow-only rule, including the failure case
   where a later profile tries to widen `allowedRoots`.
-- Lima translate test: `.mounts = []` always emitted, and emitted first.
-- Incus translate test: `readonly=true` present/absent per `ReadOnly`.
+- Lima translate test: `.mounts = []` always emitted, and emitted first; the
+  same expressions appear on the `start` invocation for an existing instance.
+- Incus translate test: `readonly=true` present/absent per `ReadOnly`; the
+  remove-then-add reconfigure sequence only touches `agentctl-mount-*` devices
+  and leaves a hand-added device alone.
 - `capability_completeness_test.go` covers the new features for free.
 - Integration tests (`//go:build integration`): on Incus, create with one
   read-only and one writable mount, assert the file is visible in the guest and
   that a write to the read-only share fails — this is what settles the
   `fs.mount.readonly` capability entry. On Lima, assert `~` is **not** visible
-  in the guest after create.
+  in the guest after create. On both, the reuse cycle: start with directory A,
+  stop, start with directory B, and assert A is gone from the guest — a mount
+  that survives a reconfigure is the failure mode that would quietly break the
+  whole "one reusable sandbox" model.
 
 ## Suggested phasing
 
@@ -323,8 +405,12 @@ Implement `~`/`{{.Name}}` expansion; emit Lima's `.mounts = []` reset. These two
 alone stop the built-in profiles from passing literal template strings to Incus
 and stop Lima sandboxes from inheriting the host home directory. No new API.
 
-**Phase 1 — the create-time flags.** `--mount`, `--mount-none`, `--mount-only`,
-`--mount-writable`, plus `ResolveMounts` containment checks.
+**Phase 1 — the flags, on both `create` and `start`.** `--mount`,
+`--mount-none`, `--mount-only`, `--mount-writable`, plus `ResolveMounts`
+containment checks, `ApplyMountPolicy`, and agentctl-owned deterministic device
+names on Incus. `start` is in this phase, not deferred: without it the tool
+forces one VM per project, which is the workflow question this design exists to
+answer.
 
 **Phase 2 — admin constraints.** `mountPolicy` in the profile schema, the two
 capability features, and the `create` gate.
@@ -348,12 +434,18 @@ updates, integration tests.
    `/proto`), require the profile YAML form on Windows, or accept a `=`
    separator variant. Hyper-V is a stub today, so this can be deferred — but the
    flag grammar should not have to change later.
-3. **Should `--mount` be accepted on `start` too?** The request framed this as
-   "defined when starting the vm." Incus can hot-attach a disk device to a
-   running instance; Lima cannot (it needs stop → edit → start). Recommendation:
-   mounts stay a create-time property for v1, with a later `agentctl mount
-   add|list|remove` mirroring `incus config device add|list|remove` if live
-   reconfiguration is genuinely wanted.
+3. **Do start-time mounts stick, or last one boot?** Both backends store the
+   mount set natively (Lima's instance YAML, Incus's device list), so the
+   zero-extra-state option is **sticky**: `start --mount ~/src/alpha` rewrites
+   the stored set, and a later bare `agentctl start work` reuses it. That
+   matches `limactl start --mount` exactly. The alternative is **per-boot**:
+   clear the mount set on `stop`, so a bare `start` exposes nothing and every
+   boot must name its directories. Sticky is the better API fit; per-boot is
+   the safer default, because a sticky mount means a bare `start` months later
+   silently re-exposes a directory the user has forgotten about. A middle
+   option: sticky storage, but `status` and `start`'s own output always print
+   the mount set, so it is never invisible. Needs a call — this is the one
+   decision that changes what a bare `agentctl start` grants.
 4. **Default when nothing is specified.** Keep the built-ins' per-instance
    `~/agentctl/workspaces/{{.Name}}` → `/workspace` mount (ergonomic, already
    instance-scoped), with `--mount-none` as the zero-access switch? Or default
