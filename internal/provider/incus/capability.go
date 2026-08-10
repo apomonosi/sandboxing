@@ -32,8 +32,22 @@ func buildCapabilities() provider.Table {
 	supported(provider.FeatureNetworkACL)
 	supported(provider.FeatureDenyLAN)
 	supported(provider.FeaturePortPublish)
+	supported(provider.FeatureMount)
 	supported(provider.FeatureImagePull)
 	supported(provider.FeatureImageBuild)
+
+	// fs.mount.readonly is marked Supported on the strength of the disk
+	// device's documented `readonly` option, which carries no
+	// container-only condition. It is called out separately here because
+	// it is the one mount behavior that could plausibly differ for VMs
+	// (whose shares go through virtiofs/9p rather than a bind mount) and
+	// has not been confirmed against a live daemon — the same caveat
+	// translate.go's package NOTE carries for every incus flag in this
+	// package. TestMountReadOnlyIsEnforced in integration_test.go is what
+	// settles it; if a VM share turns out to ignore readonly, this entry
+	// becomes ManualWorkaround ("mount the source read-only on the host
+	// first") rather than staying a claim agentctl can't back.
+	supported(provider.FeatureMountReadOnly)
 
 	underDev := func(f provider.Feature, msg string) {
 		t[f] = provider.Capability{

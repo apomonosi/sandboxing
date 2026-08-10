@@ -8,7 +8,7 @@ command(s) it would have run:
 $ agentctl --preview create demo --image=images:ubuntu/24.04 --profile=default --port=8080:80
 incus init images:ubuntu/24.04 demo --vm -c security.secureboot=false -p default -c limits.cpu=2 -c limits.memory=4GiB
 incus config device override demo root size=20GiB
-incus config device add demo mount0 disk source=~/agentctl/workspaces/{{.Name}} path=/workspace
+incus config device add demo agentctl-mount-c1a2c0ef disk source=/home/you/agentctl/workspaces/demo path=/workspace
 incus config device add demo port0 proxy listen=tcp:0.0.0.0:8080 connect=tcp:127.0.0.1:80
 incus network acl delete agentctl-demo
 incus network acl create agentctl-demo
@@ -20,10 +20,19 @@ incus network acl rule add agentctl-demo egress action=allow destination=151.101
 incus config device override demo eth0 security.acls=agentctl-demo
 ```
 
-Nothing runs. No instance is created, no ACL is touched. The output is a
-plain, copy-pasteable list of `incus` invocations — one per line, correctly
-shell-quoted — so you can run them by hand, put them in a script, or just
-read them to understand exactly what agentctl was about to do.
+Nothing runs. No instance is created, no ACL is touched, and no host directory
+is created — even though `mountPolicy.createMissing` would create the workspace
+directory on a real `create`.
+
+The output is a plain, copy-pasteable list of `incus` invocations — one per
+line, correctly shell-quoted — so you can run them by hand, put them in a
+script, or just read them to understand exactly what agentctl was about to do.
+
+Note the mount line: `~` and `{{.Name}}` are expanded before the command is
+built, so preview shows the real host path that would be shared, not the
+template. The device name is derived from the guest path, which is what lets
+`agentctl start --mount` replace agentctl's own mounts later without touching a
+disk device you added by hand.
 
 ## Why this exists
 

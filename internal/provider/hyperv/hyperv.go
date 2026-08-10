@@ -87,6 +87,10 @@ func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy p
 	return p.err(provider.FeatureNetworkACL)
 }
 
+func (p *Provider) ApplyMountPolicy(ctx context.Context, name string, mounts []provider.Mount) error {
+	return p.err(provider.FeatureMount)
+}
+
 func (p *Provider) ImagePull(ctx context.Context, ref string) error {
 	return p.err(provider.FeatureImagePull)
 }

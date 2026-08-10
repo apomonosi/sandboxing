@@ -41,6 +41,52 @@ func buildCapabilities() provider.Table {
 	underDev(provider.FeatureLogsNetwork, "Hyper-V Extended ACL logging and port mirroring are native; agentctl hasn't wired log collection up yet.")
 	underDev(provider.FeatureLogsExec, "agentctl hasn't wired exec history collection up yet.")
 
+	// Hyper-V is the one backend with no host-side share primitive at all:
+	// no virtiofs, no 9p, and no VMware-Tools-style shared folder.
+	// Enhanced Session Mode's drive redirection is RDP-based and aimed at
+	// Windows guests, not something agentctl can drive for a Linux guest.
+	// So this is a genuine platform gap like network.port-publish below,
+	// not unfinished wiring, and it stays a documented manual procedure
+	// until a native path is built.
+	//
+	// The native path being designed is a host-side SFTP server serving
+	// only the named directories, which is what Lima does by default
+	// (reverse-sshfs) — see filesystem-access.plan.md. It needs agentctl
+	// to gain a host-side daemon, which it has never had, so it is
+	// deliberately not started here.
+	//
+	// Note the cross-feature consequence of every option in this space:
+	// on Hyper-V a mount is network traffic, so it interacts with
+	// --deny-lan, which blocks the RFC1918 ranges the Default Switch hands
+	// out. Whatever lands must open that hole narrowly and visibly rather
+	// than silently widening the network policy.
+	mountPlan := `Manual workaround (Windows host, elevated PowerShell):
+1. Share the directory on the host:
+     New-SmbShare -Name "agentctl-<name>" -Path <hostDir> -FullAccess <account>
+2. Allow the guest to reach the host's vSwitch address on TCP 445 only —
+   this is a deliberate exception to --deny-lan, so keep it to that one
+   address and port.
+3. In the guest:
+     mount -t cifs //<host-vswitch-ip>/agentctl-<name> <guestPath> \
+       -o username=<account>,vers=3.1.1
+4. For a read-only mount, enforce it with the share ACL (-ReadAccess
+   instead of -FullAccess) and add ",ro" to the mount options.
+Note the guest then holds host SMB credentials, which is itself a
+lateral-movement risk; prefer a dedicated low-privilege local account.`
+
+	t[provider.FeatureMount] = provider.Capability{
+		Feature: provider.FeatureMount,
+		Status:  provider.ManualWorkaround,
+		Message: "Hyper-V has no host-directory share primitive (no virtiofs, no 9p); sharing a folder with a Linux guest goes over SMB on the guest network.",
+		Plan:    mountPlan,
+	}
+	t[provider.FeatureMountReadOnly] = provider.Capability{
+		Feature: provider.FeatureMountReadOnly,
+		Status:  provider.ManualWorkaround,
+		Message: "Read-only comes from the SMB share ACL rather than a mount flag agentctl can set.",
+		Plan:    mountPlan,
+	}
+
 	t[provider.FeaturePortPublish] = provider.Capability{
 		Feature: provider.FeaturePortPublish,
 		Status:  provider.ManualWorkaround,

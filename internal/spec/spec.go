@@ -89,13 +89,32 @@ func ResolvePolicy(profileNames []string, profileDir string, overrides profile.P
 
 // ToInstanceSpec converts a resolved name/image/policy into the
 // provider-facing InstanceSpec.
-func ToInstanceSpec(name, image string, profileNames []string, policy profile.Policy) provider.InstanceSpec {
+//
+// It can fail, unlike the pure field-copying it used to do, because mount
+// resolution is a real operation: host paths are expanded, canonicalized
+// against the filesystem, and checked against the policy's allowed roots
+// and deny paths (see profile.ResolveMounts). A mount that can't be
+// resolved safely is an error here rather than something a backend
+// discovers later — or worse, silently accepts.
+//
+// preview suppresses the one part of that which writes to disk (creating
+// a missing host directory under mountPolicy.createMissing), so
+// `--preview` keeps its contract that nothing happens.
+func ToInstanceSpec(name, image string, profileNames []string, policy profile.Policy, preview bool) (provider.InstanceSpec, error) {
+	resolve := profile.ResolveMounts
+	if preview {
+		resolve = profile.ResolveMountsPreview
+	}
+	mounts, err := resolve(policy.Mounts, name, policy.MountPolicy)
+	if err != nil {
+		return provider.InstanceSpec{}, fmt.Errorf("resolving mounts: %w", err)
+	}
 	return provider.InstanceSpec{
 		Name:      name,
 		Image:     image,
 		Profiles:  profileNames,
 		Overrides: policy.Network.ToProviderNetworkPolicy(),
 		Resources: policy.Resources.ToProviderResourceLimits(),
-		Mounts:    profile.ToProviderMounts(policy.Mounts),
-	}
+		Mounts:    mounts,
+	}, nil
 }

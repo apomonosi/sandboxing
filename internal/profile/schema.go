@@ -33,10 +33,11 @@ type Metadata struct {
 // what an ad-hoc `create` invocation's flags produce as an override layer
 // (see Merge).
 type Policy struct {
-	Network   NetworkPolicy `yaml:"network"`
-	Resources Resources     `yaml:"resources"`
-	Mounts    []Mount       `yaml:"mounts"`
-	Console   Console       `yaml:"console"`
+	Network     NetworkPolicy `yaml:"network"`
+	Resources   Resources     `yaml:"resources"`
+	Mounts      []Mount       `yaml:"mounts"`
+	MountPolicy MountPolicy   `yaml:"mountPolicy"`
+	Console     Console       `yaml:"console"`
 }
 
 type NetworkPolicy struct {
@@ -70,12 +71,59 @@ type Resources struct {
 	DiskSize string `yaml:"diskSize"` // e.g. "20GiB"
 }
 
+// Mount is one host directory exposed inside the guest.
+//
+// The field names are agentctl's own rather than either backend's, because
+// the two backends disagree: Lima calls them location/mountPoint, Incus
+// calls them source/path. Writable, though, matches Lima exactly — same
+// name, same false-means-read-only default — since a sandbox that silently
+// gets write access to a host directory is the failure worth defaulting
+// against.
 type Mount struct {
 	// HostPath supports "~" expansion and a "{{.Name}}" template
-	// substituted with the instance name at create time.
+	// substituted with the instance name; see ResolveMounts, which is the
+	// only place either is interpreted.
 	HostPath  string `yaml:"hostPath"`
 	GuestPath string `yaml:"guestPath"`
-	ReadOnly  bool   `yaml:"readOnly"`
+	Writable  bool   `yaml:"writable"`
+}
+
+// MountPolicy constrains which host directories may be mounted at all. It
+// is the admin-facing half of mount policy: profiles are the
+// org-distributed artifact (see docs/admin/distributing-profiles.md), and
+// no CLI flag can widen any field here — --mount only ever produces Mount
+// entries, which are then checked against this.
+type MountPolicy struct {
+	// AllowedRoots, when non-empty, requires every resolved host path to
+	// live under one of these directories. Empty means unconstrained,
+	// which is the pre-existing behavior for profiles that don't set it.
+	AllowedRoots []string `yaml:"allowedRoots"`
+	// DenyPaths are never mountable, even under an AllowedRoots entry.
+	// Merged additively across profiles, and unioned with a hard-coded set
+	// (see alwaysDenied) that profile authors can't forget.
+	DenyPaths []string `yaml:"denyPaths"`
+	// AllowHome permits mounting $HOME itself, along with "/" and system
+	// directories. Defaults to false: handing an agent the whole home
+	// directory is the specific failure this package exists to prevent,
+	// and Lima's own default templates do exactly that.
+	//
+	// A pointer, unlike every other bool in this file, so that "not set"
+	// is distinguishable from "set to false". Merge layers a zero-valued
+	// override on top of a profile on every create (that's how ad-hoc
+	// flags work), and with a plain bool that layer would silently reset
+	// an org profile's explicit choice. It also lets an explicit false
+	// beat a later true — see mergeMountPolicy.
+	AllowHome *bool `yaml:"allowHome"`
+	// CreateMissing creates a missing host directory (mode 0700) instead
+	// of failing. Defaults to false; the built-in profiles set it, since
+	// their per-instance workspace path can't exist before first use.
+	CreateMissing bool `yaml:"createMissing"`
+}
+
+// HomeAllowed reports whether mounting $HOME itself is permitted, applying
+// the false default for an unset AllowHome.
+func (p MountPolicy) HomeAllowed() bool {
+	return p.AllowHome != nil && *p.AllowHome
 }
 
 type Console struct {
@@ -107,11 +155,8 @@ func (r Resources) ToProviderResourceLimits() provider.ResourceLimits {
 	return provider.ResourceLimits{CPUCores: r.CPUCores, Memory: r.Memory, DiskSize: r.DiskSize}
 }
 
-// ToProviderMounts converts a Mount slice into provider.Mount.
-func ToProviderMounts(mounts []Mount) []provider.Mount {
-	out := make([]provider.Mount, len(mounts))
-	for i, m := range mounts {
-		out[i] = provider.Mount{HostPath: m.HostPath, GuestPath: m.GuestPath, ReadOnly: m.ReadOnly}
-	}
-	return out
-}
+// Mounts are deliberately not convertible to provider.Mount by a plain
+// field copy the way the two types above are: a Mount's HostPath is a
+// template ("~", "{{.Name}}") that has to be expanded, canonicalized and
+// checked against MountPolicy first. ResolveMounts (mount.go) is the only
+// path from profile.Mount to provider.Mount.

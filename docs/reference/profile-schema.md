@@ -32,8 +32,14 @@ spec:
   mounts:
     - hostPath: string           # supports "~" expansion and a "{{.Name}}"
                                   # template substituted with the instance name
-      guestPath: string          # must be an absolute path
-      readOnly: bool
+      guestPath: string          # absolute; defaults to hostPath if omitted
+      writable: bool             # default false (read-only), matching Lima
+  mountPolicy:                    # constrains which host directories may be
+                                   # mounted at all; see "Mount policy" below
+    allowedRoots: [string]        # every mount must resolve under one of these
+    denyPaths: [string]           # never mountable, even under an allowed root
+    allowHome: bool               # default false; permits mounting $HOME itself
+    createMissing: bool           # default false; mkdir 0700 a missing hostPath
   console:
     viewer: string               # advisory: "spice" | "vnc" | "native" — the
                                   # provider decides the actual mechanism it's
@@ -59,8 +65,51 @@ byte count. Must be positive; zero and negative sizes are rejected.
   or `udp`; no two `ports` entries publish the same host port + protocol
 - `resources.cpuCores >= 0`; `resources.memory`/`diskSize`, if set, parse via
   `ParseSize`
-- Every `mounts[].hostPath` is non-empty; every `mounts[].guestPath` is
-  absolute
+- Every `mounts[].hostPath` is non-empty; every `mounts[].guestPath`, when set,
+  is absolute
+
+Everything else about a mount is checked at create/start time rather than at
+load time, because it depends on the instance name and the real filesystem —
+see below.
+
+## Mount policy
+
+`mountPolicy` is the admin-facing half of mount policy. A sandbox sees nothing
+of the host filesystem except the directories named in `mounts` or via
+`--mount`, and `mountPolicy` bounds what may be named at all. There is
+deliberately **no CLI flag that widens it**: `--mount` only ever produces
+`mounts` entries, which are then checked against the policy.
+
+`internal/profile.ResolveMounts` is the single place a host path is
+interpreted. For each mount, in order:
+
+1. `~` and `{{.Name}}` are expanded (an unknown template field is an error,
+   not an empty string).
+2. The path is made absolute and cleaned.
+3. A missing directory is created with mode `0700` if `createMissing` is set,
+   otherwise it is an error.
+4. The path is canonicalized with `EvalSymlinks`, and **every check below runs
+   against the canonical path** — otherwise a symlink inside an allowed root
+   could point anywhere.
+5. `/` and `$HOME` itself are refused unless `allowHome` is set. Directories
+   *inside* `$HOME` are unaffected — that is where the default workspace lives.
+6. A built-in deny list is applied that profile authors cannot forget:
+   `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.docker`,
+   plus the backends' own state directories (`~/.lima`, `~/.local/share/incus`,
+   `~/.config/incus`) and `~/.config/agentctl`. Write access to a backend's
+   state would let an agent rewrite the *next* sandbox's configuration, which
+   escapes the sandbox without ever attacking the VM boundary.
+7. `denyPaths` is applied on top.
+8. If `allowedRoots` is non-empty, the path must live under one of them.
+   Containment compares path segments, so `/home/u/srcevil` is not inside
+   `/home/u/src`.
+9. `guestPath` defaults to the host path (Lima's own behavior), must be
+   absolute, and may not shadow `/`, `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`,
+   `/boot`, `/dev`, `/proc`, `/sys`, `/var` or `/root`.
+10. Mounts that overlap — same guest path, nested guest paths, or nested host
+    paths — are rejected.
+
+Errors aggregate, so one run reports every bad mount rather than one per fix.
 
 ## Strict decoding
 
@@ -79,6 +128,12 @@ profile with ad-hoc `create` flags:
   `--deny-lan`/`--allow-lan` against the profile's value before calling Merge)
 - `resources.*`, `console.viewer`: override's value wins whenever it's
   non-zero/non-empty, otherwise base's value survives
+- `mountPolicy`: **narrow-only** — layering can tighten what is mountable but
+  never loosen it. `allowedRoots` intersect (an empty override leaves the
+  base's roots intact rather than clearing them), `denyPaths` union, and for
+  `allowHome` an explicit `false` anywhere in the chain wins over a later
+  `true`. This asymmetry is the point: a personal profile must not be able to
+  unlock a directory an org profile ruled out.
 
 ## The Spec document (`create --spec=<file>`)
 

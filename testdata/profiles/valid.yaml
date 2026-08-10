@@ -20,6 +20,12 @@ spec:
   mounts:
     - hostPath: "~/workspaces/{{.Name}}"
       guestPath: "/workspace"
-      readOnly: false
+      writable: true
+  mountPolicy:
+    allowedRoots:
+      - "~/workspaces"
+    denyPaths:
+      - "~/workspaces/secrets"
+    createMissing: true
   console:
     viewer: "spice"

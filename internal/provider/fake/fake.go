@@ -77,6 +77,7 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 		Image:     spec.Image,
 		Profiles:  append([]string(nil), spec.Profiles...),
 		CreatedAt: p.now(),
+		Mounts:    append([]provider.Mount(nil), spec.Mounts...),
 	}
 	p.instances[spec.Name] = inst
 	cp := *inst
@@ -230,6 +231,20 @@ func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy p
 	defer p.mu.Unlock()
 	_, err := p.lookup(name)
 	return err
+}
+
+// ApplyMountPolicy records the mount set on the instance, so tests can
+// assert what `start --mount` would expose the same way Status reports it
+// on a real backend.
+func (p *Provider) ApplyMountPolicy(ctx context.Context, name string, mounts []provider.Mount) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	inst, err := p.lookup(name)
+	if err != nil {
+		return err
+	}
+	inst.Mounts = append([]provider.Mount(nil), mounts...)
+	return nil
 }
 
 func (p *Provider) ImagePull(ctx context.Context, ref string) error { return nil }

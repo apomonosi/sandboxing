@@ -1,6 +1,9 @@
 package profile
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestMerge_AdditiveListsAndOverridingScalars(t *testing.T) {
 	base := Policy{
@@ -46,5 +49,82 @@ func TestMerge_AdditiveListsAndOverridingScalars(t *testing.T) {
 	}
 	if merged.Console.Viewer != "spice" {
 		t.Errorf("Console.Viewer: want base's spice to survive, got %q", merged.Console.Viewer)
+	}
+}
+
+// MountPolicy is the one part of a Policy that must only ever narrow when
+// layered. Everything else in Merge lets a later layer win outright; here
+// that would let a personal profile unlock a directory an org profile
+// ruled out.
+func TestMergeMountPolicy_NarrowsOnly(t *testing.T) {
+	t.Run("allowedRoots intersect", func(t *testing.T) {
+		got := mergeMountPolicy(
+			MountPolicy{AllowedRoots: []string{"~/src", "~/work"}},
+			MountPolicy{AllowedRoots: []string{"~/work", "~/elsewhere"}},
+		)
+		if want := []string{"~/work"}; !reflect.DeepEqual(got.AllowedRoots, want) {
+			t.Errorf("AllowedRoots = %v, want %v (intersection, not union)", got.AllowedRoots, want)
+		}
+	})
+
+	t.Run("an unconstrained override keeps the base's roots", func(t *testing.T) {
+		got := mergeMountPolicy(MountPolicy{AllowedRoots: []string{"~/src"}}, MountPolicy{})
+		if want := []string{"~/src"}; !reflect.DeepEqual(got.AllowedRoots, want) {
+			t.Errorf("AllowedRoots = %v, want %v: an empty override must not clear the constraint", got.AllowedRoots, want)
+		}
+	})
+
+	t.Run("denyPaths union and dedupe", func(t *testing.T) {
+		got := mergeMountPolicy(
+			MountPolicy{DenyPaths: []string{"~/.ssh", "~/secrets"}},
+			MountPolicy{DenyPaths: []string{"~/secrets", "~/keys"}},
+		)
+		if want := []string{"~/.ssh", "~/secrets", "~/keys"}; !reflect.DeepEqual(got.DenyPaths, want) {
+			t.Errorf("DenyPaths = %v, want %v", got.DenyPaths, want)
+		}
+	})
+}
+
+func TestMergeMountPolicy_AllowHome(t *testing.T) {
+	tests := []struct {
+		name           string
+		base, override *bool
+		want           bool
+	}{
+		{"unset stays denied", nil, nil, false},
+		{"explicit true survives an unset override", allow(true), nil, true},
+		{"an explicit false beats a later true", allow(false), allow(true), false},
+		{"an explicit false wins from the override side too", allow(true), allow(false), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeMountPolicy(MountPolicy{AllowHome: tc.base}, MountPolicy{AllowHome: tc.override})
+			if got.HomeAllowed() != tc.want {
+				t.Errorf("HomeAllowed() = %v, want %v", got.HomeAllowed(), tc.want)
+			}
+		})
+	}
+}
+
+// Every create layers a zero-valued override (the ad-hoc flags) on top of
+// the resolved profile. With a plain bool that layer would silently reset
+// an org profile's explicit allowHome, which is why the field is a
+// pointer.
+func TestMerge_ZeroOverrideDoesNotResetMountPolicy(t *testing.T) {
+	base := Policy{MountPolicy: MountPolicy{
+		AllowedRoots:  []string{"~/src"},
+		AllowHome:     allow(true),
+		CreateMissing: true,
+	}}
+	merged := Merge(base, Policy{})
+
+	if !reflect.DeepEqual(merged.MountPolicy.AllowedRoots, []string{"~/src"}) {
+		t.Errorf("AllowedRoots = %v, want the base's to survive", merged.MountPolicy.AllowedRoots)
+	}
+	if !merged.MountPolicy.HomeAllowed() {
+		t.Error("HomeAllowed() = false, want the base's explicit true to survive an empty override")
+	}
+	if !merged.MountPolicy.CreateMissing {
+		t.Error("CreateMissing = false, want the base's true to survive")
 	}
 }

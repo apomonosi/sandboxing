@@ -2,6 +2,7 @@ package incus
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
@@ -57,12 +58,43 @@ func TestBuildRootDiskResizeArgs(t *testing.T) {
 }
 
 func TestBuildMountDeviceArgs(t *testing.T) {
-	m := provider.Mount{HostPath: "/host/ws", GuestPath: "/workspace", ReadOnly: true}
-	got := buildMountDeviceArgs("demo", "mount0", m)
-	want := []string{"config", "device", "add", "demo", "mount0", "disk",
+	m := provider.Mount{HostPath: "/host/ws", GuestPath: "/workspace"}
+	got := buildMountDeviceArgs("demo", m)
+	want := []string{"config", "device", "add", "demo", mountDeviceName("/workspace"), "disk",
 		"source=/host/ws", "path=/workspace", "readonly=true"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildMountDeviceArgs() = %v, want %v", got, want)
+	}
+}
+
+// TestBuildMountDeviceArgs_Writable covers the one place agentctl's
+// writable polarity is negated into Incus's readonly spelling: a writable
+// mount must emit no readonly option at all, not readonly=false.
+func TestBuildMountDeviceArgs_Writable(t *testing.T) {
+	m := provider.Mount{HostPath: "/host/ws", GuestPath: "/workspace", Writable: true}
+	got := buildMountDeviceArgs("demo", m)
+	for _, arg := range got {
+		if strings.HasPrefix(arg, "readonly=") {
+			t.Errorf("buildMountDeviceArgs() = %v, want no readonly option for a writable mount", got)
+		}
+	}
+}
+
+// TestMountDeviceName_StableAndOwned pins the two properties
+// ApplyMountPolicy depends on: the same guest path always yields the same
+// device name (so re-applying an unchanged mount set is a no-op rather
+// than a rename), and every generated name carries the ownership prefix
+// that keeps a reconfigure from deleting a hand-added device.
+func TestMountDeviceName_StableAndOwned(t *testing.T) {
+	first := mountDeviceName("/workspace")
+	if second := mountDeviceName("/workspace"); first != second {
+		t.Errorf("mountDeviceName() = %q then %q, want a stable name", first, second)
+	}
+	if !strings.HasPrefix(first, mountDevicePrefix) {
+		t.Errorf("mountDeviceName() = %q, want the %q ownership prefix", first, mountDevicePrefix)
+	}
+	if other := mountDeviceName("/other"); other == first {
+		t.Errorf("mountDeviceName() collided: %q for both /workspace and /other", first)
 	}
 }
 

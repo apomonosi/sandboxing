@@ -16,6 +16,8 @@ for which cells are genuine platform gaps.
 | network.acl (`--allow`) | Supported | **Manual workaround** | Under development |
 | network.deny-lan (`--deny-lan`) | Supported | **Manual workaround** | Under development |
 | network.port-publish (`--port`) | Supported | Supported | **Manual workaround** |
+| fs.mount (`--mount`) | Supported | Supported | **Manual workaround** |
+| fs.mount.readonly | Supported | Supported | **Manual workaround** |
 | image.pull | Supported | **Not available** | Under development |
 | image.build | Supported | Under development | Under development |
 | logs.network / logs.exec | Under development | **Not available** (network only) / Under development | Under development |
@@ -42,6 +44,19 @@ agentctl's own wiring:
 - **Hyper-V: network.port-publish → Manual workaround.** Hyper-V has no
   built-in "publish a port" primitive; agentctl prints a NAT-switch +
   `netsh interface portproxy` procedure.
+- **Hyper-V: fs.mount / fs.mount.readonly → Manual workaround.** Hyper-V has no
+  host-directory share primitive at all: no virtiofs, no 9p, and no
+  VMware-Tools-style shared folder. Enhanced Session Mode's drive redirection
+  is RDP-based and aimed at Windows guests. Sharing a folder with a Linux guest
+  therefore goes over SMB on the guest network, which agentctl prints as a
+  procedure. Two consequences worth understanding before relying on it: the
+  guest ends up holding host SMB credentials (a lateral-movement risk in its
+  own right — use a dedicated low-privilege account), and because the mount is
+  network traffic it needs a deliberate hole in `--deny-lan` for the host's
+  vSwitch address. A native path — a host-side SFTP server serving only the
+  named directories, which is what Lima does by default — is designed in
+  `filesystem-access.plan.md` but not built: it needs agentctl to gain a
+  host-side daemon, and the Hyper-V backend's own lifecycle is still a stub.
 
 Every other `Under development` cell reflects a backend that supports the
 feature natively (New-VM/Start-VM, Extended Port ACLs, Standard/Production

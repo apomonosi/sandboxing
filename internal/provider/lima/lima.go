@@ -203,6 +203,23 @@ func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy p
 	return p.err(provider.FeatureNetworkACL)
 }
 
+// ApplyMountPolicy rewrites the instance's mount set via `limactl edit`,
+// one --set expression per call. The instance is stopped at this point
+// (agentctl applies mounts immediately before Start), which is what
+// `limactl edit` requires — it refuses a running instance outright.
+//
+// The first expression buildMountExpressions emits resets `.mounts`, so
+// this replaces the previous set rather than adding to it; running the
+// expressions in order matters for that reason.
+func (p *Provider) ApplyMountPolicy(ctx context.Context, name string, mounts []provider.Mount) error {
+	for _, expr := range buildMountExpressions(mounts) {
+		if _, _, err := p.run(ctx, buildEditArgs(name, expr)...); err != nil {
+			return fmt.Errorf("applying mount policy: %w", err)
+		}
+	}
+	return nil
+}
+
 func (p *Provider) ImagePull(ctx context.Context, ref string) error {
 	return p.err(provider.FeatureImagePull)
 }

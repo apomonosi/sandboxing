@@ -2,6 +2,7 @@ package incus
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
@@ -196,15 +197,50 @@ func buildRootDiskResizeArgs(instanceName, diskSize string) []string {
 	return []string{"config", "device", "override", instanceName, "root", "size=" + diskSize}
 }
 
+// mountDevicePrefix marks the disk devices agentctl itself manages.
+//
+// It matters because `start --mount` reconfigures an instance by removing
+// its old mount devices before adding the new ones: without an ownership
+// marker, that removal would also delete a disk device the user attached
+// by hand with `incus config device add`. Only devices carrying this
+// prefix are ever removed.
+const mountDevicePrefix = "agentctl-mount-"
+
+// mountDeviceName derives a device name from the guest path, so a given
+// mount always maps to the same device across reconfigures — an
+// index-derived name (mount0, mount1) shifts whenever the mount set is
+// reordered, which would make a re-apply look like "remove everything, add
+// everything" even when nothing changed.
+//
+// FNV-1a rather than a sanitized path because Incus device names are
+// constrained (no slashes, length-limited) and a sanitized long path would
+// collide as readily as a hash while being harder to bound.
+func mountDeviceName(guestPath string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(guestPath))
+	return fmt.Sprintf("%s%08x", mountDevicePrefix, h.Sum32())
+}
+
 // buildMountDeviceArgs returns the `incus config device add` args to
-// bind-mount one host path into the guest.
-func buildMountDeviceArgs(instanceName, deviceName string, m provider.Mount) []string {
-	args := []string{"config", "device", "add", instanceName, deviceName, "disk",
+// bind-mount one host path into the guest. This is the single place
+// agentctl's writable polarity is negated into Incus's readonly spelling.
+func buildMountDeviceArgs(instanceName string, m provider.Mount) []string {
+	args := []string{"config", "device", "add", instanceName, mountDeviceName(m.GuestPath), "disk",
 		"source=" + m.HostPath, "path=" + m.GuestPath}
-	if m.ReadOnly {
+	if !m.Writable {
 		args = append(args, "readonly=true")
 	}
 	return args
+}
+
+// buildMountDeviceRemoveArgs returns the `incus config device remove` args
+// for one agentctl-managed mount device.
+func buildMountDeviceRemoveArgs(instanceName, deviceName string) []string {
+	return []string{"config", "device", "remove", instanceName, deviceName}
+}
+
+func buildListOneArgs(instanceName string) []string {
+	return []string{"list", instanceName, "--format", "json"}
 }
 
 // buildPortProxyDeviceArgs returns the `incus config device add` args for

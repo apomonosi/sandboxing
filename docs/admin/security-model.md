@@ -40,6 +40,37 @@ independently capability-gated concern (`ApplyNetworkPolicy` is its own
   rule goes stale until the policy is re-applied. A DNS-filtering proxy that
   stays dynamically in sync is a possible future improvement, not built now.
 
+## Host filesystem access is opt-in and named
+
+A sandbox sees nothing of the host filesystem except directories explicitly
+named at `create` or `start` time. The defaults that make that hold:
+
+- **Read-only unless asked otherwise.** A mount's `writable` field defaults to
+  `false`, matching Lima's own default. Be precise about what a writable mount
+  is: a two-way channel out of the sandbox. Anything the agent writes lands on
+  the host, and the VM boundary does not apply to it.
+- **`$HOME` is never mounted** unless a profile explicitly sets
+  `mountPolicy.allowHome`. Directories *inside* `$HOME` are fine — that is
+  where the per-instance workspace lives.
+- **Credentials and backend state are refused unconditionally.** `~/.ssh`,
+  `~/.aws`, `~/.kube` and friends, plus `~/.lima` and Incus's own state
+  directories. That last group matters more than it looks: an agent that can
+  write a backend's state can rewrite the *next* sandbox's configuration,
+  escaping without ever attacking the VM boundary.
+- **Symlinks are resolved before any check.** Containment is enforced against
+  the canonical path, so a symlink inside an allowed root cannot point
+  elsewhere.
+- **Admins can bound it further.** `mountPolicy.allowedRoots` in an
+  org-distributed profile constrains what anyone may name, and no CLI flag
+  widens it; layering profiles can only tighten it.
+
+Two honest limits. First, read-only enforcement is per-provider — see the
+[capability matrix](capability-matrix.md); on Incus it is asserted from the
+disk device's documented `readonly` option and pinned by an integration test
+rather than assumed. Second, mounts are **sticky** across boots, so a bare
+`agentctl start` re-exposes whatever was last applied; that is why `start` and
+`status` always print the active mount set.
+
 ## Non-root by default inside the guest
 
 `shell`/`exec` run as a provisioned non-root user by default, not root — see

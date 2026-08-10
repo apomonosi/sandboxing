@@ -52,11 +52,19 @@ func buildCreateArgs(spec provider.InstanceSpec) []string {
 }
 
 // buildEditArgs returns the args for one `limactl edit --set <expr> <name>`
-// call — the fallback path if --set turns out not to be accepted directly
-// on `create` (see the package NOTE above). Not used by the primary
-// dispatch path yet, kept ready and tested so it doesn't bit-rot.
+// call. This is how ApplyMountPolicy rebinds an existing instance's mount
+// set: `limactl edit` refuses a *running* instance ("cannot edit a running
+// instance"), which is exactly the state agentctl applies mounts in —
+// immediately before Start, with the instance stopped.
+//
+// It doubles as the documented fallback if --set turns out not to be
+// accepted directly on `create` (see the package NOTE above).
+//
+// --start=false is passed explicitly because `limactl edit` otherwise
+// prompts "Do you want to start the instance now?" on a TTY, and agentctl
+// decides when to start, not the editor.
 func buildEditArgs(name, expr string) []string {
-	return []string{"edit", "--set", expr, name}
+	return []string{"edit", "--set", expr, "--start=false", name}
 }
 
 // buildSetExpressions returns one yq expression per structured
@@ -98,11 +106,7 @@ func buildSetExpressions(spec provider.InstanceSpec) []string {
 	// prompt regardless of which template spec.Image points at.
 	exprs = append(exprs, ".user.sudo = true")
 
-	for _, m := range spec.Mounts {
-		exprs = append(exprs, fmt.Sprintf(
-			`.mounts += [{"location": %q, "mountPoint": %q, "writable": %t}]`,
-			m.HostPath, m.GuestPath, !m.ReadOnly))
-	}
+	exprs = append(exprs, buildMountExpressions(spec.Mounts)...)
 
 	for _, pp := range spec.Overrides.Ports {
 		proto := pp.Protocol
@@ -114,6 +118,34 @@ func buildSetExpressions(spec provider.InstanceSpec) []string {
 			pp.GuestPort, pp.HostPort, proto))
 	}
 
+	return exprs
+}
+
+// buildMountExpressions returns the yq expressions that make the guest's
+// mount set exactly mounts — nothing more.
+//
+// The leading reset is the important part, and it is emitted
+// unconditionally, including for an empty mount set. `spec.Image` is a
+// Lima *template* name, and templates commonly declare their own mounts
+// (the stock ones have historically mounted the whole host home directory
+// read-only, plus /tmp/lima writable). Appending to that list with `+=`
+// would silently inherit them, so agentctl would be handing an agent the
+// user's entire home directory while its own docs promised a sandbox.
+// Resetting first makes this equivalent to `limactl --mount-only`, which
+// is the right default here: the mount set is agentctl's policy, not the
+// template author's.
+//
+// `.mounts = []` rather than Lima's own `--mount-none` spelling of
+// `.mounts = null`, because a subsequent `+=` against null is not
+// something the bundled yq dialect is confirmed to handle, and an empty
+// list is unambiguous either way.
+func buildMountExpressions(mounts []provider.Mount) []string {
+	exprs := []string{".mounts = []"}
+	for _, m := range mounts {
+		exprs = append(exprs, fmt.Sprintf(
+			`.mounts += [{"location": %q, "mountPoint": %q, "writable": %t}]`,
+			m.HostPath, m.GuestPath, m.Writable))
+	}
 	return exprs
 }
 
