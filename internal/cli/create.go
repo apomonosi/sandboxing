@@ -43,6 +43,11 @@ func newCreateCmd() *cobra.Command {
 			if err := gateOrBlock(cmd.OutOrStdout(), providerName, p.Capabilities().Get(provider.FeatureCreate), forcePartial(cmd)); err != nil {
 				return err
 			}
+			// Host-configuration problems that would otherwise surface as
+			// a confusing failure inside the guest, long after create
+			// reported success. Warnings only — never blocks, and stays
+			// silent when a check can't run (see provider.Preflighter).
+			renderPreflight(cmd.OutOrStdout(), p, cmd.Context())
 
 			var baseOverrides profile.Policy
 			profileNames := profiles

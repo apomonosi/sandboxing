@@ -66,6 +66,13 @@ $ sudo firewall-cmd --get-zone-of-interface=incusbr0
 no zone
 ```
 
+`agentctl create` checks this for you and warns before creating anything, so
+you shouldn't have to remember it. The check is read-only and stays silent
+whenever it can't get a definitive answer — firewalld absent, not running, or
+the query needing root it doesn't have — so its silence is not a guarantee
+that all is well. It also checks `net.ipv4.ip_forward`, the other way traffic
+reaches the bridge and stops there.
+
 ```console
 $ sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent
 $ sudo firewall-cmd --reload

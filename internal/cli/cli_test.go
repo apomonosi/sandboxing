@@ -21,6 +21,14 @@ func useIsolatedConfig(t *testing.T) {
 
 func execute(t *testing.T, p *fake.Provider, args ...string) (string, error) {
 	t.Helper()
+	return executeProvider(t, p, args...)
+}
+
+// executeProvider is execute for a Provider that isn't a *fake.Provider —
+// a wrapper implementing an optional interface (CommandPreviewer,
+// Preflighter) on top of one, say.
+func executeProvider(t *testing.T, p provider.Provider, args ...string) (string, error) {
+	t.Helper()
 	reg := provider.NewRegistry()
 	reg.Register("test", func() (provider.Provider, error) { return p, nil })
 
