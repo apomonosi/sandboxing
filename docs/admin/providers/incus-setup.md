@@ -52,10 +52,19 @@ this is already set up — it does not manage Incus permissions itself.
 
 **Do this before your first `agentctl create`, or instances will come up with
 no IPv4 address.** On distributions that ship firewalld — Fedora, RHEL and
-derivatives — `incusbr0` lands in the restricted `public` zone by default,
-which blocks DHCP (UDP 67/68) to the bridge's dnsmasq. IPv6 doesn't use DHCP,
-so it configures fine via router advertisements, and the result is a guest
-that looks half-working: an IPv6 address, IPv6 resolvers, and no IPv4 at all.
+derivatives — `incusbr0` is not assigned to any zone, so it falls through to
+the default one (normally `public`), which blocks DHCP (UDP 67/68) to the
+bridge's dnsmasq. IPv6 doesn't use DHCP, so it configures fine via router
+advertisements, and the result is a guest that looks half-working: an IPv6
+address, IPv6 resolvers, and no IPv4 at all.
+
+Check it — `no zone` is the unhealthy answer, and so is any zone other than
+`trusted`:
+
+```console
+$ sudo firewall-cmd --get-zone-of-interface=incusbr0
+no zone
+```
 
 ```console
 $ sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent
