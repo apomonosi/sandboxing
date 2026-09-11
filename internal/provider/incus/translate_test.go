@@ -123,33 +123,188 @@ func TestNetworkACLCommands_DenyLANAndAllow(t *testing.T) {
 		t.Errorf("first command should create the ACL, got %v", cmds[0])
 	}
 
-	foundLANBlock := false
 	foundAllow := false
 	foundACLAttach := false
 	for _, c := range cmds {
-		joined := ""
-		for _, a := range c {
-			joined += a + " "
-		}
-		if contains(c, "destination=10.0.0.0/8") {
-			foundLANBlock = true
-		}
 		if contains(c, "destination=93.184.216.34") && contains(c, "action=allow") {
 			foundAllow = true
 		}
 		if contains(c, "security.acls=agentctl-demo") {
 			foundACLAttach = true
 		}
-		_ = joined
-	}
-	if !foundLANBlock {
-		t.Error("expected an RFC1918 block rule for 10.0.0.0/8")
 	}
 	if !foundAllow {
 		t.Error("expected an allow rule for the resolved example.com IP")
 	}
 	if !foundACLAttach {
 		t.Error("expected the ACL to be attached to eth0 via security.acls")
+	}
+}
+
+// TestNetworkACLCommands_NeverEmitsReject is the load-bearing invariant of
+// this whole file, and the regression test for a real lockout on Incus
+// 6.x / Fedora 44: every instance agentctl created had no working DNS.
+//
+// Incus re-sorts ACL rules by action — all rejects first, then allows,
+// first match wins — so a reject rule shadows every allow regardless of
+// the order they were added in. agentctl used to emit reject rules for
+// the RFC1918 ranges under --deny-lan, which covered the bridge's own
+// dnsmasq resolver and blackholed name resolution with no way for an
+// allow rule to rescue it (upstream: lxc/incus#1919).
+//
+// Default-deny already rejects everything unmatched, so deny-lan is
+// enforced by withholding allows instead. If a reject rule ever comes
+// back, DNS breaks again.
+func TestNetworkACLCommands_NeverEmitsReject(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy provider.NetworkPolicy
+	}{
+		{"deny-lan", provider.NetworkPolicy{DenyLAN: true}},
+		{"allow-lan", provider.NetworkPolicy{DenyLAN: false}},
+		{"deny-lan with allows", provider.NetworkPolicy{
+			DenyLAN: true,
+			Allow:   []provider.AllowRule{{Domain: "example.com", Ports: []int{443}}},
+		}},
+		{"dns disabled", provider.NetworkPolicy{DenyLAN: true, DNS: provider.DNSPolicy{Disabled: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved := map[string][]string{"example.com": {"93.184.216.34"}}
+			for _, c := range networkACLCommands("demo", tc.policy, resolved) {
+				for _, arg := range c {
+					if arg == "action=reject" || arg == "action=drop" {
+						t.Errorf("emitted a reject/drop rule, which shadows every allow: %v", c)
+					}
+				}
+			}
+		})
+	}
+}
+
+// DNS has to be allowed or the allowlist cannot work at all: the guest
+// must resolve a domain before it can reach the address the allowlist
+// permits. Both protocols, because a response over 512 bytes falls back
+// to TCP.
+func TestNetworkACLCommands_AllowsDNSByDefault(t *testing.T) {
+	cmds := networkACLCommands("demo", provider.NetworkPolicy{DenyLAN: true}, nil)
+	var sawUDP, sawTCP bool
+	for _, c := range cmds {
+		if !contains(c, "destination_port=53") || !contains(c, "action=allow") {
+			continue
+		}
+		if contains(c, "protocol=udp") {
+			sawUDP = true
+		}
+		if contains(c, "protocol=tcp") {
+			sawTCP = true
+		}
+	}
+	if !sawUDP || !sawTCP {
+		t.Errorf("want DNS allow rules for both udp and tcp, got udp=%v tcp=%v in %v", sawUDP, sawTCP, cmds)
+	}
+}
+
+func TestNetworkACLCommands_DNSServersNarrowAndDisableRemoves(t *testing.T) {
+	narrowed := networkACLCommands("demo", provider.NetworkPolicy{
+		DenyLAN: true,
+		DNS:     provider.DNSPolicy{Servers: []string{"10.0.0.1"}},
+	}, nil)
+	var sawNarrow, sawBroad bool
+	for _, c := range narrowed {
+		if !contains(c, "destination_port=53") {
+			continue
+		}
+		if contains(c, "destination=10.0.0.1") {
+			sawNarrow = true
+		} else {
+			sawBroad = true
+		}
+	}
+	if !sawNarrow {
+		t.Errorf("want a DNS rule scoped to the named server, got %v", narrowed)
+	}
+	if sawBroad {
+		t.Errorf("naming a DNS server must not also leave the any-destination rule in place, got %v", narrowed)
+	}
+
+	disabled := networkACLCommands("demo", provider.NetworkPolicy{
+		DenyLAN: true,
+		DNS:     provider.DNSPolicy{Disabled: true},
+	}, nil)
+	for _, c := range disabled {
+		if contains(c, "destination_port=53") {
+			t.Errorf("dns.disabled must emit no DNS rule, got %v", c)
+		}
+	}
+}
+
+// --allow-lan has to grant the private ranges explicitly. Removing a
+// reject rule would leave them just as unreachable, since default-deny
+// catches everything unmatched — which is what --allow-lan used to do:
+// nothing at all.
+func TestNetworkACLCommands_AllowLANGrantsPrivateRangesBothFamilies(t *testing.T) {
+	cmds := networkACLCommands("demo", provider.NetworkPolicy{DenyLAN: false}, nil)
+	for _, want := range []string{"10.0.0.0/8", "192.168.0.0/16", "fc00::/7", "fe80::/10"} {
+		found := false
+		for _, c := range cmds {
+			if contains(c, "destination="+want) && contains(c, "action=allow") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("--allow-lan should emit an allow for %s, got %v", want, cmds)
+		}
+	}
+}
+
+// Incus cannot express "allow this domain, except on the LAN", so the
+// conflict is resolved here: with deny-lan on, an allow-domain that
+// resolves to a private address is dropped rather than emitted.
+func TestNetworkACLCommands_DenyLANDropsPrivateResolvedIPs(t *testing.T) {
+	policy := provider.NetworkPolicy{
+		DenyLAN: true,
+		Allow: []provider.AllowRule{
+			{Domain: "internal.example", Ports: []int{443}},
+			{Domain: "public.example", Ports: []int{443}},
+		},
+	}
+	resolved := map[string][]string{
+		"internal.example": {"192.168.1.5", "fd00::5"},
+		"public.example":   {"93.184.216.34"},
+	}
+	cmds := networkACLCommands("demo", policy, resolved)
+	for _, c := range cmds {
+		if contains(c, "destination=192.168.1.5") || contains(c, "destination=fd00::5") {
+			t.Errorf("deny-lan must drop an allow-domain that resolves to a LAN address, got %v", c)
+		}
+	}
+	found := false
+	for _, c := range cmds {
+		if contains(c, "destination=93.184.216.34") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the public address should still be allowed")
+	}
+}
+
+func TestIsPrivateAddr(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"10.1.2.3":       true,
+		"192.168.1.5":    true,
+		"172.16.0.1":     true,
+		"169.254.1.1":    true,
+		"127.0.0.1":      true,
+		"fd42::1":        true,
+		"fe80::1":        true,
+		"93.184.216.34":  false,
+		"2606:4700::1":   false,
+		"not-an-address": true, // fail closed
+	} {
+		if got := isPrivateAddr(addr); got != want {
+			t.Errorf("isPrivateAddr(%q) = %v, want %v", addr, got, want)
+		}
 	}
 }
 

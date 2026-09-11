@@ -217,3 +217,80 @@ func TestIntegration_ApplyMountPolicy_RebindsAcrossBoots(t *testing.T) {
 		t.Error("the previous project's directory is still visible after a rebind; the old mount was not removed")
 	}
 }
+
+// TestIntegration_DefaultPolicyLeavesDNSWorking is the test whose absence
+// let a total DNS lockout ship. The existing policy tests all assert that
+// something is *blocked*; none asserted the sandbox is still functional
+// afterwards, so an instance with no working name resolution passed the
+// entire suite.
+//
+// Reproduces lxc/incus#1919 against agentctl's own rules: with the
+// default policy applied, a guest must still be able to resolve a name.
+func TestIntegration_DefaultPolicyLeavesDNSWorking(t *testing.T) {
+	skipUnlessIntegration(t)
+
+	p := NewWithRunner(provider.ExecRunner{})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	name := "agentctl-it-dns"
+	t.Cleanup(func() { _ = p.Delete(context.Background(), name, true) })
+
+	if _, err := p.Create(ctx, provider.InstanceSpec{
+		Name:  name,
+		Image: "images:alpine/edge",
+		Overrides: provider.NetworkPolicy{
+			DenyLAN: true,
+			Allow:   []provider.AllowRule{{Domain: "example.com", Ports: []int{443}}},
+		},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := p.Start(ctx, name); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	code, err := p.Exec(ctx, name, provider.ExecOptions{
+		Command: []string{"getent", "hosts", "example.com"},
+	})
+	if err != nil {
+		t.Fatalf("Exec(getent): %v", err)
+	}
+	if code != 0 {
+		t.Error("the guest cannot resolve a name under the default policy: the ACL is blackholing DNS (see networkACLCommands' doc comment)")
+	}
+}
+
+// The counterpart: deny-lan must still actually deny. Without this, the
+// fix for the DNS lockout could quietly become "allow everything".
+func TestIntegration_DenyLANStillBlocksWithoutRejectRules(t *testing.T) {
+	skipUnlessIntegration(t)
+
+	p := NewWithRunner(provider.ExecRunner{})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	name := "agentctl-it-denylan-nodrop"
+	t.Cleanup(func() { _ = p.Delete(context.Background(), name, true) })
+
+	if _, err := p.Create(ctx, provider.InstanceSpec{
+		Name:      name,
+		Image:     "images:alpine/edge",
+		Overrides: provider.NetworkPolicy{DenyLAN: true},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := p.Start(ctx, name); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	code, err := p.Exec(ctx, name, provider.ExecOptions{
+		Command: []string{"sh", "-c", "curl -s --connect-timeout 3 http://192.168.1.1/ ; echo exit=$?"},
+	})
+	if err != nil {
+		t.Fatalf("Exec(curl): %v", err)
+	}
+	if code == 0 {
+		t.Error("expected the LAN request to fail under deny-lan, but curl reported success")
+	}
+}

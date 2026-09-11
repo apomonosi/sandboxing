@@ -52,6 +52,29 @@ type NetworkPolicy struct {
 	AllowFile string `yaml:"allowFile"`
 	// Ports are host:guest port publishes, Docker-style.
 	Ports []PortPublish `yaml:"ports"`
+	// DNS controls name-resolution egress. The zero value allows DNS to
+	// any destination, because without it the allowlist below cannot
+	// work: a guest has to resolve a domain before it can reach the
+	// address the allowlist permits.
+	DNS DNSPolicy `yaml:"dns"`
+}
+
+// Deliberately absent from this schema: the --no-network-policy escape
+// hatch. It lives only on provider.NetworkPolicy, set per invocation by
+// the CLI flag. Making it a profile field would let a distributed profile
+// silently disable network enforcement for everyone who applies it, which
+// is precisely the kind of quiet widening mountPolicy's narrow-only merge
+// exists to prevent.
+
+// DNSPolicy narrows or disables name-resolution egress. See
+// provider.DNSPolicy for why allowing DNS to any destination is the
+// default, and what it costs.
+type DNSPolicy struct {
+	// Servers, when non-empty, restricts DNS egress to these addresses.
+	Servers []string `yaml:"servers"`
+	// Disabled removes DNS egress altogether — only useful when a proxy
+	// resolves on the sandbox's behalf.
+	Disabled bool `yaml:"disabled"`
 }
 
 type AllowRule struct {
@@ -147,7 +170,15 @@ func (n NetworkPolicy) ToProviderNetworkPolicy() provider.NetworkPolicy {
 		}
 		ports[i] = provider.PortPublish{HostPort: p.Host, GuestPort: p.Guest, Protocol: proto}
 	}
-	return provider.NetworkPolicy{DenyLAN: n.DenyLAN, Allow: allow, Ports: ports}
+	return provider.NetworkPolicy{
+		DenyLAN: n.DenyLAN,
+		Allow:   allow,
+		Ports:   ports,
+		DNS: provider.DNSPolicy{
+			Servers:  append([]string(nil), n.DNS.Servers...),
+			Disabled: n.DNS.Disabled,
+		},
+	}
 }
 
 // ToProviderResourceLimits converts Resources into provider.ResourceLimits.

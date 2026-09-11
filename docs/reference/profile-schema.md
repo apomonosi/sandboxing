@@ -25,6 +25,9 @@ spec:
       - host: int
         guest: int
         protocol: string        # "tcp" (default) or "udp"
+    dns:                         # name-resolution egress; see "DNS" below
+      servers: [string]         # empty (default) = allow DNS to any destination
+      disabled: bool            # default false; true = no DNS egress at all
   resources:
     cpuCores: int               # must be >= 0
     memory: string              # size string, e.g. "4GiB", "512MiB", "20GB"
@@ -71,6 +74,49 @@ byte count. Must be positive; zero and negative sizes are rejected.
 Everything else about a mount is checked at create/start time rather than at
 load time, because it depends on the instance name and the real filesystem —
 see below.
+
+## DNS
+
+`network.dns` controls name-resolution egress, which is infrastructure rather
+than part of the allowlist: a guest has to resolve a domain *before* it can
+reach the address `allow` permits, so without DNS the allowlist cannot work at
+all.
+
+The default — an empty `servers` list — allows DNS to **any** destination on
+port 53, over both UDP and TCP. That is deliberately permissive, and the cost
+is real: DNS is a well-known exfiltration channel, since data can be encoded
+into subdomain labels of an attacker-controlled zone. The alternative, allowing
+only the bridge's own resolver, requires discovering that address per network
+and per address family — and getting it wrong leaves the sandbox with no
+working DNS at all, which is the failure this default exists to avoid.
+
+Narrow it once you know your resolver addresses:
+
+```yaml
+spec:
+  network:
+    dns:
+      servers: ["10.115.230.1"]   # only this resolver
+```
+
+Or remove DNS egress entirely, which only makes sense when a proxy resolves on
+the sandbox's behalf:
+
+```yaml
+spec:
+  network:
+    dns:
+      disabled: true
+```
+
+Merging is narrow-only, like `mountPolicy`: an override that names servers
+replaces a broader base, and `disabled` is OR'd so the most restrictive layer
+in the chain wins.
+
+There is deliberately **no profile field for disabling network policy
+wholesale**. The `--no-network-policy` escape hatch is a per-invocation CLI
+flag only, so a distributed profile can't quietly turn enforcement off for
+everyone who applies it.
 
 ## Mount policy
 

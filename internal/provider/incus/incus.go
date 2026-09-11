@@ -95,8 +95,15 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 		}
 	}
 
-	if err := p.ApplyNetworkPolicy(ctx, spec.Name, spec.Overrides); err != nil {
-		return nil, fmt.Errorf("applying network policy: %w", err)
+	// Unrestricted leaves the NIC with the backend's own default
+	// connectivity: no ACL is created and none is attached. The escape
+	// hatch exists because a sandbox whose policy is wrong is otherwise
+	// undebuggable from the inside — no DNS, no egress, nothing to read a
+	// log from.
+	if !spec.Overrides.Unrestricted {
+		if err := p.ApplyNetworkPolicy(ctx, spec.Name, spec.Overrides); err != nil {
+			return nil, fmt.Errorf("applying network policy: %w", err)
+		}
 	}
 
 	// provisionDefaultUser needs `incus exec`, which requires a running

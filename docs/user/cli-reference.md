@@ -39,6 +39,7 @@ Creates an instance without starting it.
 | `--profile <name>` | Named profile to apply (repeatable) |
 | `--allow <domain[:port,port]>` | Egress allowlist entry (repeatable) |
 | `--deny-lan` / `--allow-lan` | Block (default) or allow LAN egress |
+| `--no-network-policy` | Apply no network ACL at all (unrestricted egress) — an explicit, loudly-warned escape hatch for debugging a sandbox that has locked itself out; see [Troubleshooting](troubleshooting.md#nothing-in-the-sandbox-can-reach-the-network--curl-fails-during-an-agent-install) |
 | `--port <host:guest[/proto]>` | Publish a port (repeatable) |
 | `--mount <hostPath[:guestPath][:w\|:ro]>` | Expose a host directory, read-only unless `:w` (repeatable) |
 | `--mount-only <spec>` | Like `--mount`, but replaces the profile's mounts instead of adding to them |

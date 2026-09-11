@@ -48,8 +48,44 @@ this is already set up — it does not manage Incus permissions itself.
 - Network ACL support (native since early Incus 6.x; agentctl uses this for
   the egress allowlist/`--deny-lan` enforcement).
 
+## Fedora/RHEL: add the bridge to firewalld's trusted zone first
+
+**Do this before your first `agentctl create`, or instances will come up with
+no IPv4 address.** On distributions that ship firewalld — Fedora, RHEL and
+derivatives — `incusbr0` lands in the restricted `public` zone by default,
+which blocks DHCP (UDP 67/68) to the bridge's dnsmasq. IPv6 doesn't use DHCP,
+so it configures fine via router advertisements, and the result is a guest
+that looks half-working: an IPv6 address, IPv6 resolvers, and no IPv4 at all.
+
+```console
+$ sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent
+$ sudo firewall-cmd --reload
+```
+
+Or tell Incus not to manage those rules for that bridge:
+
+```console
+$ incus network set incusbr0 ipv4.firewall=false
+$ incus network set incusbr0 ipv6.firewall=false
+```
+
+This is plain Incus behavior, not something agentctl causes — you'd hit it
+with a bare `incus launch` too. It is called out here because the symptom
+(an agent install failing at `curl`) looks like an agentctl network-policy
+problem and isn't.
+
 ## Known operational notes
 
+- **agentctl never emits ACL *reject* rules, deliberately.** Incus re-sorts
+  ACL rules by action — all rejects first, then allows, first match wins — so
+  a reject rule shadows every allow no matter what order it was added in. An
+  earlier version rejected the RFC1918 ranges under `--deny-lan`, which
+  covered the bridge's own dnsmasq resolver and blackholed DNS for every
+  instance (upstream: [lxc/incus#1919](https://github.com/lxc/incus/issues/1919)).
+  Since attaching any ACL already makes unmatched egress default to reject,
+  `--deny-lan` is enforced by *withholding* allow rules instead, and
+  `--allow-lan` grants the private ranges explicitly. See
+  `networkACLCommands` in `internal/provider/incus/translate.go`.
 - Incus 6.14 patched a bridge-network ACL isolation bypass that could let a
   compromised instance intercept traffic from other instances — exactly the
   attack class this project defends against. Keep Incus itself patched and
