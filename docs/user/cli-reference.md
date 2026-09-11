@@ -45,7 +45,7 @@ Creates an instance without starting it.
 | `--mount-none` | Expose no host directories at all |
 | `--mount-writable` | Make every mount writable |
 | `--cpu-cores`, `--memory`, `--disk-size` | Resource overrides |
-| `--agent <name>` | Just-in-time install a coding agent (`claude`, `codex`, `opencode`, `pi`) — implies `start`; see [Agent Provisioning](agent-provisioning.md) |
+| `--agent <name>` | Just-in-time install a coding agent (`claude`, `codex`, `cursor`, `gemini`, `opencode`, `pi`) — implies `start`; see [Agent Provisioning](agent-provisioning.md) |
 
 Supports `--preview`/`--dry-run` (see [Preview Mode](preview-mode.md)); with
 `--agent` set, preview only shows the `create` command itself — the implied
