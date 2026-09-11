@@ -20,6 +20,7 @@ func newCreateCmd() *cobra.Command {
 		allow     []string
 		denyLAN   bool
 		allowLAN  bool
+		noNetPol  bool
 		ports     []string
 		cpuCores  int
 		memory    string
@@ -78,6 +79,10 @@ func newCreateCmd() *cobra.Command {
 
 			var flagOverrides profile.Policy
 			flagOverrides.Network.DenyLAN = denyLAN && !allowLAN
+			// Not a profile field on purpose (see internal/profile's
+			// NetworkPolicy): this is a per-invocation debugging choice,
+			// so it is carried on the provider-facing policy only.
+			unrestricted := noNetPol
 			for _, a := range allow {
 				rule, err := parseAllowFlag(a)
 				if err != nil {
@@ -115,12 +120,19 @@ func newCreateCmd() *cobra.Command {
 
 			fp := forcePartial(cmd)
 			w := cmd.OutOrStdout()
-			if policy.Network.DenyLAN {
+			if unrestricted {
+				// Loud on purpose. This is the one flag that turns the
+				// sandbox's network protection off wholesale, and a
+				// sandbox that silently has no policy is worse than one
+				// that visibly has none.
+				fmt.Fprintln(w, "agentctl: WARNING --no-network-policy: no network ACL will be applied; this sandbox gets unrestricted egress.")
+			}
+			if policy.Network.DenyLAN && !unrestricted {
 				if err := gateOrBlock(w, providerName, p.Capabilities().Get(provider.FeatureDenyLAN), fp); err != nil {
 					return err
 				}
 			}
-			if len(policy.Network.Allow) > 0 {
+			if len(policy.Network.Allow) > 0 && !unrestricted {
 				if err := gateOrBlock(w, providerName, p.Capabilities().Get(provider.FeatureNetworkACL), fp); err != nil {
 					return err
 				}
@@ -135,6 +147,7 @@ func newCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			instSpec.Overrides.Unrestricted = unrestricted
 			if err := gateMounts(w, providerName, p, instSpec.Mounts, fp); err != nil {
 				return err
 			}
@@ -181,6 +194,8 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&allow, "allow", nil, "egress allowlist entry \"domain[:port,port]\" (repeatable)")
 	cmd.Flags().BoolVar(&denyLAN, "deny-lan", true, "block egress to RFC1918/link-local ranges")
 	cmd.Flags().BoolVar(&allowLAN, "allow-lan", false, "opt out of --deny-lan for this instance")
+	cmd.Flags().BoolVar(&noNetPol, "no-network-policy", false,
+		"apply no network ACL at all (unrestricted egress) — for debugging a sandbox that has locked itself out")
 	cmd.Flags().StringSliceVar(&ports, "port", nil, "publish a port \"host:guest[/proto]\" (repeatable)")
 	cmd.Flags().IntVar(&cpuCores, "cpu-cores", 0, "override CPU core limit")
 	cmd.Flags().StringVar(&agentName, "agent", "", "just-in-time install a coding agent after create (valid: "+strings.Join(agent.Names(), ", ")+")")

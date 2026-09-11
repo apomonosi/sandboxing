@@ -33,10 +33,65 @@ The Incus backend shells out to the `incus` CLI rather than linking a Go SDK
 
 ## A LAN request I expected to succeed is being blocked
 
-That's `--deny-lan` (on by default) doing its job — it blocks RFC1918 and
-link-local ranges specifically so a sandbox can't reach other devices on your
-network. If you genuinely need that, pass `--allow-lan` on `create`, or set
-`denyLAN: false` in a profile, understanding the tradeoff.
+That's `--deny-lan` (on by default) doing its job — the sandbox can't reach
+other devices on your network. If you genuinely need that, pass `--allow-lan`
+on `create`, or set `denyLAN: false` in a profile, understanding the tradeoff.
+
+Note that `--deny-lan` is enforced by *not allowing* the private ranges rather
+than by rejecting them, because an Incus reject rule would shadow every allow
+rule including DNS. One consequence worth knowing: if an `--allow` domain
+resolves to a LAN address, that rule is silently dropped rather than applied,
+since "allow this host, but not the LAN" can't be expressed in a single ACL.
+`--preview` shows exactly which rules survive.
+
+## Nothing in the sandbox can reach the network / `curl` fails during an agent install
+
+Work through these in order — the first two are host-side and far more common
+than a problem with the policy itself.
+
+**1. On Fedora/RHEL, check firewalld.** If the guest has an IPv6 address but no
+IPv4 one, firewalld is blocking DHCP on the bridge. See
+[Incus setup](../admin/providers/incus-setup.md#fedorarhel-add-the-bridge-to-firewalld-trusted-zone-first).
+
+```console
+$ incus exec <name> -- ip -br addr      # IPv6 only? -> firewalld
+```
+
+**2. Check DNS specifically**, since everything else depends on it:
+
+```console
+$ incus exec <name> -- getent hosts example.com
+```
+
+If that fails but the instance otherwise looks healthy, the ACL is the
+suspect. Confirm by detaching it:
+
+```console
+$ incus config device unset <name> eth0 security.acls
+$ incus exec <name> -- getent hosts example.com     # works now? -> the ACL
+```
+
+**3. Create a sandbox with no policy at all** to get a working baseline you
+can compare against:
+
+```console
+$ agentctl create debug --image=<ref> --no-network-policy
+```
+
+That skips ACL creation and attachment entirely. It is an explicit, visible
+escape hatch for exactly this situation — the sandbox gets unrestricted
+egress, so use it to diagnose, not as a habit.
+
+**4. Inspect what agentctl would actually apply**, without applying it:
+
+```console
+$ agentctl --preview create demo --image=<ref> --agent=claude
+```
+
+Every `incus network acl rule add` line is shown verbatim. Note that with
+`--deny-lan` on, an `--allow` domain that resolves to a LAN address is
+deliberately *omitted* rather than allowed — so a missing rule there is the
+policy working, not a bug.
 
 ## `start` fails with "incompatible with secureboot"
 

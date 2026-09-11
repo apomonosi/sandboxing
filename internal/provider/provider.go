@@ -118,6 +118,38 @@ type NetworkPolicy struct {
 	DenyLAN bool
 	Allow   []AllowRule
 	Ports   []PortPublish
+	// DNS controls name-resolution egress, which is infrastructure rather
+	// than part of the domain allowlist: without it the allowlist cannot
+	// work at all, since the guest has to resolve a domain before it can
+	// reach the address the allowlist permits.
+	DNS DNSPolicy
+	// Unrestricted skips network policy enforcement entirely — no ACL is
+	// created and none is attached, so the instance keeps the backend's
+	// own default connectivity. An explicit, visible escape hatch for
+	// debugging a sandbox that has locked itself out, in the same family
+	// as --root and --allow-lan; never the default.
+	Unrestricted bool
+}
+
+// DNSPolicy describes how much name-resolution egress a sandbox gets.
+//
+// The zero value allows DNS to any destination on port 53. That is
+// deliberately permissive: DNS is a well-known exfiltration channel
+// (arbitrary data encoded into subdomain labels of an attacker-controlled
+// zone), so a sandbox that can reach any resolver can leak. The
+// alternative — resolving only through the bridge's own dnsmasq — needs
+// the bridge address, which varies per network and per address family and
+// is the exact discovery that is easy to get wrong and leave a sandbox
+// with no working DNS at all. Set Servers to narrow it once you know the
+// resolver addresses for your setup.
+type DNSPolicy struct {
+	// Servers, when non-empty, restricts DNS egress to these addresses
+	// instead of allowing it to any destination.
+	Servers []string
+	// Disabled removes DNS egress altogether. Only useful when every
+	// destination the sandbox needs is reached through a proxy that
+	// resolves on its behalf.
+	Disabled bool
 }
 
 type AllowRule struct {

@@ -55,7 +55,7 @@ func TestPreviewCreate_NoNetworkAllowRules(t *testing.T) {
 		"config device override demo root size=20GiB",
 		"config device add demo " + mountDeviceName("/workspace") + " disk source=/host/ws path=/workspace readonly=true",
 		"config device add demo port0 proxy listen=tcp:0.0.0.0:8080 connect=tcp:127.0.0.1:80",
-		"network acl rule add agentctl-demo egress action=reject destination=10.0.0.0/8",
+		"network acl rule add agentctl-demo egress action=allow protocol=udp destination_port=53",
 		"config device override demo eth0 security.acls=agentctl-demo",
 	} {
 		if !strings.Contains(joinedAll, want) {
@@ -109,6 +109,24 @@ func TestPreviewCreate_MatchesRealCreateCommandSequence(t *testing.T) {
 		wantArgs := append([]string{binary}, want.Args...)
 		if !reflect.DeepEqual(got, wantArgs) {
 			t.Errorf("call %d = %v, want %v", i, got, wantArgs)
+		}
+	}
+}
+
+// TestPreviewCreate_UnrestrictedShowsNoACL guards the preview/dispatch
+// symmetry for --no-network-policy. Create skips the ACL entirely when
+// Unrestricted is set, so a preview that still listed the acl commands
+// would be describing something that never runs.
+func TestPreviewCreate_UnrestrictedShowsNoACL(t *testing.T) {
+	p := newTestProvider()
+	cmds := p.PreviewCreate(provider.InstanceSpec{
+		Name:      "demo",
+		Image:     "images:ubuntu/24.04",
+		Overrides: provider.NetworkPolicy{DenyLAN: true, Unrestricted: true},
+	})
+	for _, c := range cmds {
+		if strings.Contains(c.String(), "network acl") || strings.Contains(c.String(), "security.acls") {
+			t.Errorf("preview must not show ACL commands under --no-network-policy, got %q", c.String())
 		}
 	}
 }

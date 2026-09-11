@@ -114,3 +114,57 @@ func TestStatus_ReportsAgentctlMountsOnly(t *testing.T) {
 		t.Error("Status reported a readonly=true device as writable")
 	}
 }
+
+// TestCreate_UnrestrictedSkipsACL covers the --no-network-policy escape
+// hatch: no ACL is created, and crucially none is attached, so the
+// instance keeps the backend's own default connectivity. This exists
+// because a sandbox whose policy is wrong is otherwise undebuggable from
+// the inside — no DNS, no egress, nothing to read a log from.
+func TestCreate_UnrestrictedSkipsACL(t *testing.T) {
+	fr := &fakeRunner{}
+	p := NewWithRunner(fr).(*Provider)
+
+	if _, err := p.Create(context.Background(), provider.InstanceSpec{
+		Name:      "demo",
+		Image:     "images:ubuntu/24.04",
+		Overrides: provider.NetworkPolicy{DenyLAN: true, Unrestricted: true},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, c := range fr.calls {
+		for _, arg := range c {
+			if strings.HasPrefix(arg, "security.acls=") {
+				t.Errorf("--no-network-policy must not attach an ACL, got %v", c)
+			}
+		}
+		if len(c) >= 3 && c[1] == "network" && c[2] == "acl" && contains(c, "create") {
+			t.Errorf("--no-network-policy must not create an ACL, got %v", c)
+		}
+	}
+}
+
+// The default path must still attach one, so the escape hatch above can't
+// silently become the norm.
+func TestCreate_AppliesACLByDefault(t *testing.T) {
+	fr := &fakeRunner{}
+	p := NewWithRunner(fr).(*Provider)
+
+	if _, err := p.Create(context.Background(), provider.InstanceSpec{
+		Name:      "demo",
+		Image:     "images:ubuntu/24.04",
+		Overrides: provider.NetworkPolicy{DenyLAN: true},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var attached bool
+	for _, c := range fr.calls {
+		for _, arg := range c {
+			if arg == "security.acls=agentctl-demo" {
+				attached = true
+			}
+		}
+	}
+	if !attached {
+		t.Error("a default create should attach the per-instance ACL")
+	}
+}

@@ -67,6 +67,12 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 // (read-only) DNS lookup, same as the live path, so the preview shows the
 // actual IPs that would be allow-listed right now.
 func (p *Provider) previewNetworkPolicy(name string, policy provider.NetworkPolicy) []provider.Command {
+	// Unrestricted means Create runs none of this, so preview must show
+	// none of it either — preview that lies about what executes is worse
+	// than no preview at all.
+	if policy.Unrestricted {
+		return nil
+	}
 	resolved := resolveAllowRules(policy.Allow)
 	cmds := []provider.Command{cmd(buildACLDeleteArgs(name))}
 	for _, args := range networkACLCommands(name, policy, resolved) {

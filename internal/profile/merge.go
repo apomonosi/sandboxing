@@ -28,6 +28,15 @@ func Merge(base, override Policy) Policy {
 		out.Network.AllowFile = override.Network.AllowFile
 	}
 
+	// DNS narrows only, like mountPolicy: an override that names servers
+	// replaces a broader base (empty means "any destination", so naming
+	// any is a tightening), and Disabled is OR'd so the most restrictive
+	// layer in the chain wins.
+	if len(override.Network.DNS.Servers) > 0 {
+		out.Network.DNS.Servers = append([]string(nil), override.Network.DNS.Servers...)
+	}
+	out.Network.DNS.Disabled = base.Network.DNS.Disabled || override.Network.DNS.Disabled
+
 	if override.Resources.CPUCores != 0 {
 		out.Resources.CPUCores = override.Resources.CPUCores
 	}

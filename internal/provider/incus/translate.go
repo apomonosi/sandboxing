@@ -3,6 +3,7 @@ package incus
 import (
 	"fmt"
 	"hash/fnv"
+	"net"
 	"strings"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
@@ -16,13 +17,35 @@ import (
 // tests (incus_test.go, //go:build integration) are where a mismatch
 // should be caught.
 
-// rfc1918AndLinkLocal is blocked by default (--deny-lan) so a sandbox
-// can't reach other devices on the same network.
-var rfc1918AndLinkLocal = []string{
+// privateRanges are the address ranges --deny-lan is about: other devices
+// on the same network as the host. Both address families, because a
+// dual-stack bridge (Incus's default gives out an fd42::/64 ULA alongside
+// IPv4) would otherwise leave half the LAN reachable while the capability
+// table claimed deny-lan was enforced.
+//
+// These are only ever emitted as *allow* rules, for --allow-lan. See
+// networkACLCommands for why a reject rule must never be generated.
+var privateRanges = []string{
 	"10.0.0.0/8",
 	"172.16.0.0/12",
 	"192.168.0.0/16",
 	"169.254.0.0/16",
+	"fc00::/7",  // unique local addresses (RFC 4193), incl. Incus's fd42::/16
+	"fe80::/10", // link-local
+}
+
+// isPrivateAddr reports whether a resolved allow-rule address belongs to
+// the LAN ranges --deny-lan is meant to keep a sandbox away from. Uses
+// net.IP's own classifiers rather than matching the CIDR strings above:
+// IsPrivate covers RFC 1918 and RFC 4193 in one call, and an unparseable
+// address is treated as private so a malformed lookup result fails
+// closed.
+func isPrivateAddr(addr string) bool {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return true
+	}
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLoopback() || ip.IsUnspecified()
 }
 
 // aclName returns the deterministic per-instance network ACL name.
@@ -260,7 +283,29 @@ func buildPortProxyDeviceArgs(instanceName, deviceName string, pp provider.PortP
 // invocations (each a separate []string of args, run in order) needed to
 // create/replace the per-instance network ACL matching policy and attach
 // it to the instance's NIC, implementing default-deny egress with an
-// explicit allowlist and (if DenyLAN) an RFC1918/link-local block.
+// explicit allowlist.
+//
+// THIS FUNCTION MUST NEVER EMIT A REJECT RULE, and that constraint is why
+// it is shaped the way it is.
+//
+// Incus does not evaluate ACL rules in the order they are added. It
+// re-sorts them by action: all reject/drop rules are applied first, then
+// the allow rules, then the default policy, and the first match wins. A
+// reject rule is therefore strictly more powerful than any allow rule no
+// matter what order agentctl emits them in, and "reject the LAN but allow
+// this one address on it" cannot be expressed at all.
+//
+// An earlier version emitted reject rules for the RFC1918 ranges whenever
+// DenyLAN was set. The guest's own DNS resolver is the bridge's dnsmasq,
+// which lives on an RFC1918 address — so those rejects blackholed name
+// resolution for every instance agentctl created, and no allow rule could
+// rescue it. That is upstream issue lxc/incus#1919 ("ACL against Network
+// Bridge Drop DNS by default"), reproduced against a real Fedora 44 host.
+//
+// The rejects were never load-bearing: with default-deny already in
+// force, anything not explicitly allowed is rejected, the LAN included.
+// So DenyLAN is now enforced by *withholding* allow rules, and
+// --allow-lan grants the private ranges explicitly.
 //
 // Default-deny for unmatched egress traffic needs no explicit command:
 // Incus's own default for security.acls.default.egress.action is "reject"
@@ -286,10 +331,30 @@ func networkACLCommands(instanceName string, policy provider.NetworkPolicy, reso
 
 	cmds = append(cmds, []string{"network", "acl", "create", acl})
 
-	if policy.DenyLAN {
-		for _, cidr := range rfc1918AndLinkLocal {
+	// DNS first in the emitted order purely for readability — Incus
+	// ignores the order these are added in (see the doc comment).
+	if !policy.DNS.Disabled {
+		for _, proto := range []string{"udp", "tcp"} {
+			if len(policy.DNS.Servers) == 0 {
+				cmds = append(cmds, []string{"network", "acl", "rule", "add", acl, "egress",
+					"action=allow", "protocol=" + proto, "destination_port=53"})
+				continue
+			}
+			for _, server := range policy.DNS.Servers {
+				cmds = append(cmds, []string{"network", "acl", "rule", "add", acl, "egress",
+					"action=allow", "destination=" + server, "protocol=" + proto, "destination_port=53"})
+			}
+		}
+	}
+
+	// --allow-lan is an explicit *allow*, not the absence of a reject.
+	// With default-deny in force, removing a reject rule would leave the
+	// LAN just as unreachable as before, which is what the previous
+	// implementation did: --allow-lan silently did nothing.
+	if !policy.DenyLAN {
+		for _, cidr := range privateRanges {
 			cmds = append(cmds, []string{"network", "acl", "rule", "add", acl, "egress",
-				"action=reject", "destination=" + cidr})
+				"action=allow", "destination=" + cidr})
 		}
 	}
 
@@ -304,6 +369,16 @@ func networkACLCommands(instanceName string, policy provider.NetworkPolicy, reso
 	seenRules := make(map[string]bool)
 	for _, rule := range policy.Allow {
 		for _, ip := range resolvedAllowIPs[rule.Domain] {
+			// With deny-lan on, an allow-domain that resolves to a LAN
+			// address is dropped rather than emitted. Incus can't express
+			// "allow this, except on the LAN" — a reject rule would
+			// shadow every other allow, so the conflict has to be
+			// resolved here, at generation time. Dropping it keeps
+			// deny-lan's promise; the rule's absence is visible in
+			// --preview.
+			if policy.DenyLAN && isPrivateAddr(ip) {
+				continue
+			}
 			ruleArgs := []string{"network", "acl", "rule", "add", acl, "egress",
 				"action=allow", "destination=" + ip, "protocol=tcp"}
 			if len(rule.Ports) > 0 {
