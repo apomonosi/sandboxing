@@ -34,12 +34,12 @@ $ claude --version
 
 | `--agent` value | Installs | Host API key it expects | Egress allowed |
 |---|---|---|---|
-| `claude` | Claude Code | `ANTHROPIC_API_KEY` | `claude.ai`, `*.anthropic.com` |
+| `claude` | Claude Code | `ANTHROPIC_API_KEY` | `claude.ai`, `downloads.claude.ai`, `platform.claude.com`, `api.anthropic.com`, `statsig.anthropic.com` |
 | `codex` | OpenAI Codex CLI | `OPENAI_API_KEY` | `chatgpt.com`, `api.openai.com` |
-| `cursor` | Cursor CLI (`cursor-agent`) | `CURSOR_API_KEY` | `cursor.com`, `api2.cursor.sh`, `*.cursorapi.com` |
+| `cursor` | Cursor CLI (`cursor-agent`) | `CURSOR_API_KEY` | `cursor.com`, `api2.cursor.sh` |
 | `gemini` | Gemini CLI | `GEMINI_API_KEY` | `registry.npmjs.org`, `generativelanguage.googleapis.com`, `accounts.google.com`, `oauth2.googleapis.com` |
 | `opencode` | opencode | *(multi-provider — none)* | `opencode.ai` |
-| `pi` | pi | `ANTHROPIC_API_KEY` *(default provider)* | `pi.dev`, `*.anthropic.com` |
+| `pi` | pi | `ANTHROPIC_API_KEY` *(default provider)* | `pi.dev`, `api.anthropic.com` |
 
 `opencode` and `pi` are explicitly multi-provider tools: `opencode` connects
 to whichever model backend you configure inside the sandbox, and `pi`

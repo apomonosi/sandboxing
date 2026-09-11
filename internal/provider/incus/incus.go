@@ -416,6 +416,16 @@ func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy p
 // apex domain is resolved — matching the exact set of hosts behind a
 // wildcard is not something IP-based ACLs can express, and is called out
 // as a known limitation in docs/admin/security-model.md.
+//
+// That limitation bites harder than "known limitation" suggests, so it is
+// worth stating plainly: a "*.example.com" rule allows the address of
+// example.com and nothing else. If the hosts you care about are
+// subdomains — api.example.com, cdn.example.com — the rule permits an
+// address none of them use, and they stay blocked while the policy looks
+// like it covers them. This cost a live debugging session on Fedora 44:
+// --agent=claude carried "*.anthropic.com", which allowed the marketing
+// site while api.anthropic.com, the endpoint every request goes to,
+// remained unreachable. Name concrete hosts.
 func resolveAllowRules(rules []provider.AllowRule) map[string][]string {
 	out := make(map[string][]string, len(rules))
 	for _, rule := range rules {

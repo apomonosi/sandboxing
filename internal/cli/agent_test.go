@@ -58,7 +58,10 @@ func TestCLI_Create_WithAgent_SetsDefaultUserAndMergesAllowlist(t *testing.T) {
 	for _, rule := range p.lastCreateSpec.Overrides.Allow {
 		domains = append(domains, rule.Domain)
 	}
-	for _, want := range []string{"claude.ai", "*.anthropic.com"} {
+	// Concrete hosts, not "*.anthropic.com": a wildcard resolves to the
+	// apex only, so it allowed the marketing site while the API endpoint
+	// stayed blocked. See TestRegistry_NoWildcardDomains in internal/agent.
+	for _, want := range []string{"claude.ai", "api.anthropic.com"} {
 		found := false
 		for _, d := range domains {
 			if d == want {

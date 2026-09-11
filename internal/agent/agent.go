@@ -66,14 +66,33 @@ type Spec struct {
 //     some setups. The entry covers install plus the primary API path;
 //     anything beyond that is a --allow extension, same as the
 //     multi-provider agents above.
+//
+// PREFER CONCRETE HOSTNAMES OVER WILDCARDS HERE. A "*.example.com" entry
+// does not do what it looks like: the Incus backend resolves allow-rules
+// to IP addresses, and it does that by stripping the "*." and resolving
+// the *apex* (see resolveAllowRules in internal/provider/incus). So
+// "*.anthropic.com" produced an allow rule for anthropic.com — the
+// marketing site — while api.anthropic.com, which is where Claude Code
+// actually sends every request, resolves elsewhere and stayed blocked.
+// That was a real failure on a live host, not a theoretical one. A
+// wildcard is only worth using when the apex is itself a destination.
 var Registry = map[string]Spec{
 	"claude": {
 		Name:          "claude",
 		InstallScript: "curl -fsSL https://claude.ai/install.sh | bash",
 		EnvVar:        "ANTHROPIC_API_KEY",
+		// Anthropic publishes this list; see
+		// https://code.claude.com/docs/en/network-config. Two more it
+		// names are left out deliberately: raw.githubusercontent.com is
+		// a very broad grant for what it buys, and *.sentry.io is
+		// optional error reporting. Add either with --allow if you need
+		// them.
 		AllowDomains: []profile.AllowRule{
 			{Domain: "claude.ai", Ports: []int{443}},
-			{Domain: "*.anthropic.com", Ports: []int{443}},
+			{Domain: "downloads.claude.ai", Ports: []int{443}},
+			{Domain: "platform.claude.com", Ports: []int{443}},
+			{Domain: "api.anthropic.com", Ports: []int{443}},
+			{Domain: "statsig.anthropic.com", Ports: []int{443}},
 		},
 	},
 	"codex": {
@@ -99,7 +118,10 @@ var Registry = map[string]Spec{
 		EnvVar:        "ANTHROPIC_API_KEY",
 		AllowDomains: []profile.AllowRule{
 			{Domain: "pi.dev", Ports: []int{443}},
-			{Domain: "*.anthropic.com", Ports: []int{443}},
+			// Concrete host, not *.anthropic.com: see the wildcard note
+			// above. pi defaults to Anthropic, and this is the endpoint
+			// that default actually talks to.
+			{Domain: "api.anthropic.com", Ports: []int{443}},
 		},
 	},
 	"gemini": {
@@ -129,7 +151,13 @@ var Registry = map[string]Spec{
 		AllowDomains: []profile.AllowRule{
 			{Domain: "cursor.com", Ports: []int{443}},
 			{Domain: "api2.cursor.sh", Ports: []int{443}},
-			{Domain: "*.cursorapi.com", Ports: []int{443}},
+			// Cursor's docs also recommend *.cursorapi.com, but a
+			// wildcard here would only allow the apex (see the note
+			// above), which nothing contacts — coverage in appearance
+			// only. The one concrete host they name under it,
+			// marketplace.cursorapi.com, serves the IDE extension
+			// marketplace rather than the CLI, so it is left out until
+			// something is shown to need it.
 		},
 	},
 }
