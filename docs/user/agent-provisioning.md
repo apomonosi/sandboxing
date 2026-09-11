@@ -74,6 +74,20 @@ Cursor's own network-configuration docs also name `api3`/`api4`/`api5`,
 extend the allowlist the same way as for a multi-provider agent:
 `agentctl create demo --agent=cursor --allow='*.cursor.sh:443'`.
 
+## The registry covers the agent, not the project
+
+An agent's entry allows what the *agent* needs: its install domain and its
+model API. It deliberately does not allow what the **project** needs — an
+agent asked to add a dependency and run the tests still has to reach PyPI,
+npm, the Go module proxy or crates.io, and that varies by repository rather
+than by agent. Compose an ecosystem profile for that:
+
+```console
+$ agentctl create demo --image=… --profile=default --profile=python --agent=claude
+```
+
+See [Built-in profiles](profiles-and-policies.md#built-in-profiles).
+
 ## What it doesn't do (yet)
 
 Forwarding a host API key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...) into

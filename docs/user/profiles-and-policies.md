@@ -142,6 +142,61 @@ $ agentctl create demo --profile=default --allow=github.com:443 --port=9000:9000
 This applies the `default` profile's full allowlist plus `github.com:443`,
 and publishes port 9000 in addition to anything the profile already defined.
 
+## Which profile applies when you don't name one
+
+`create` and `start` resolve profiles in this order:
+
+1. explicit `--profile` flags (repeatable, merged in order)
+2. the configured `defaultProfile` (`agentctl profile set <name>`)
+3. the built-in **`default`**
+
+That last step means a bare `agentctl create demo --image=…` is never
+policy-free: it gets default-deny egress, LAN blocked, modest resources and
+one per-instance workspace. Before this fallback existed, a create with no
+profile configured resolved against an empty policy — no resource limits and
+no workspace at all, so an `--agent` install came up with nowhere to work.
+
+A file-based profile named `default` in the search paths below still wins over
+the built-in one, so you can replace the baseline wholesale without touching
+any flags.
+
+## Built-in profiles
+
+| Name | Purpose |
+|---|---|
+| `default` | The baseline described above. Pre-approves **no** domains. |
+| `strict` | Minimal resources, and `allowedRoots` confines every mount to the workspace directory. |
+| `python` | PyPI access (`pypi.org`, `files.pythonhosted.org`) |
+| `node` | npm registry access (`registry.npmjs.org`) |
+| `go` | Module proxy and checksum DB (`proxy.golang.org`, `sum.golang.org`, …) |
+| `rust` | crates.io (`index.crates.io`, `crates.io`, `static.crates.io`) |
+
+The last four are **ecosystem profiles**: they carry egress entries only — no
+resources, mounts or `mountPolicy` — so they layer on top of a base profile
+instead of competing with it:
+
+```console
+$ agentctl create demo --image=… --profile=default --profile=python --agent=claude
+```
+
+That composition is the intended shape for "an agent working on a Python
+project": `default` supplies resources and the workspace, `python` supplies the
+package registries, and `--agent=claude` supplies Claude Code's own install and
+API domains (see [Agent Provisioning](agent-provisioning.md)). None of those
+three concerns is baked into the others.
+
+`default` deliberately pre-approves nothing. It used to allow
+`*.anthropic.com` plus PyPI, which made the baseline both agent- and
+language-flavoured — a `--agent=gemini` user inherited an unused Anthropic
+grant, and a Go user inherited Python registries. Those now live where they
+actually vary.
+
+!!! note "`--mount` accumulates on top of the profile's mounts"
+    Since a bare create now carries `default`'s `/workspace` mount, adding
+    `--mount ~/src/project:/workspace` gives you *two* mounts at the same guest
+    path, which is rejected as overlapping. Use `--mount-only` to replace the
+    profile's mounts rather than add to them.
+
 ## Where profiles live
 
 `agentctl profile list`/`show`/`set` search, in order:
@@ -150,7 +205,7 @@ and publishes port 9000 in addition to anything the profile already defined.
 2. `~/.config/agentctl/profiles/<name>.yaml` (personal)
 3. the configured `profileDir` (org-distributed — see
    [Distributing Profiles Org-Wide](../admin/distributing-profiles.md))
-4. embedded built-ins (`default`, `strict`)
+4. embedded built-ins (`default`, `strict`, `python`, `node`, `go`, `rust`)
 
 ## Strict decoding
 

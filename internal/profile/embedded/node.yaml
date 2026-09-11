@@ -1,0 +1,18 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: node
+  description: >-
+    Ecosystem profile: npm registry access for a Node.js project. Carries
+    egress entries only — no resources, mounts or mountPolicy — so it
+    composes on top of a base profile rather than replacing it:
+    --profile=default --profile=node
+spec:
+  network:
+    # See python.yaml: denyLAN is repeated in every ecosystem profile
+    # because Merge takes the override's value as-is.
+    denyLAN: true
+    allow:
+      - domain: "registry.npmjs.org"
+        ports: [443]
+    ports: []

@@ -1,0 +1,25 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: rust
+  description: >-
+    Ecosystem profile: crates.io registry access for a Rust project.
+    Carries egress entries only — no resources, mounts or mountPolicy — so
+    it composes on top of a base profile rather than replacing it:
+    --profile=default --profile=rust
+spec:
+  network:
+    # See python.yaml: denyLAN is repeated in every ecosystem profile
+    # because Merge takes the override's value as-is.
+    denyLAN: true
+    allow:
+      # Sparse index, Cargo's default protocol since Rust 1.70.
+      - domain: "index.crates.io"
+        ports: [443]
+      - domain: "crates.io"
+        ports: [443]
+      # Crate archives are served from the static host, so builds fail
+      # with only the index allowed.
+      - domain: "static.crates.io"
+        ports: [443]
+    ports: []

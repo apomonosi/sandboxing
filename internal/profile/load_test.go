@@ -81,3 +81,81 @@ func TestLoadNamed_FallsBackToBuiltin(t *testing.T) {
 		t.Fatal("expected an error for an unknown profile name")
 	}
 }
+
+// TestBuiltins_AllLoadAndValidate guards every embedded profile, not just
+// the two the rest of these tests name: a malformed or unknown-field YAML
+// would otherwise only surface the first time someone asked for it by
+// name.
+func TestBuiltins_AllLoadAndValidate(t *testing.T) {
+	names := BuiltinNames()
+	if len(names) == 0 {
+		t.Fatal("BuiltinNames() is empty")
+	}
+	for _, name := range names {
+		p, err := LoadNamed(name, "")
+		if err != nil {
+			t.Errorf("LoadNamed(%q): %v", name, err)
+			continue
+		}
+		if p.Metadata.Name != name {
+			t.Errorf("LoadNamed(%q).Metadata.Name = %q, want %q", name, p.Metadata.Name, name)
+		}
+	}
+}
+
+// TestEcosystemProfiles_ComposeSafely pins the two invariants that make
+// an ecosystem profile layerable on top of a base one. Both are silent
+// failures if broken: a mount would collide with the base profile's
+// workspace and be rejected as overlapping, and an omitted denyLAN would
+// resolve to false through Merge and quietly unblock the LAN.
+func TestEcosystemProfiles_ComposeSafely(t *testing.T) {
+	for _, name := range []string{"python", "node", "go", "rust"} {
+		p, err := LoadNamed(name, "")
+		if err != nil {
+			t.Fatalf("LoadNamed(%q): %v", name, err)
+		}
+		if len(p.Spec.Mounts) != 0 {
+			t.Errorf("%s declares mounts %+v; ecosystem profiles must declare none", name, p.Spec.Mounts)
+		}
+		if !p.Spec.Network.DenyLAN {
+			t.Errorf("%s does not set denyLAN: true; layering it last would unblock the LAN", name)
+		}
+		if len(p.Spec.Network.Allow) == 0 {
+			t.Errorf("%s has no allow entries, which is its whole purpose", name)
+		}
+	}
+}
+
+// TestEcosystemProfile_LayersOntoDefault is the composition the docs tell
+// users to run: the base profile's resources and workspace survive, and
+// the ecosystem profile's domains are added rather than replacing.
+func TestEcosystemProfile_LayersOntoDefault(t *testing.T) {
+	base, err := LoadNamed(Default, "")
+	if err != nil {
+		t.Fatalf("LoadNamed(default): %v", err)
+	}
+	eco, err := LoadNamed("python", "")
+	if err != nil {
+		t.Fatalf("LoadNamed(python): %v", err)
+	}
+	merged := Merge(base.Spec, eco.Spec)
+
+	if merged.Resources.CPUCores != base.Spec.Resources.CPUCores {
+		t.Errorf("cpuCores = %d, want the base profile's %d to survive", merged.Resources.CPUCores, base.Spec.Resources.CPUCores)
+	}
+	if len(merged.Mounts) != len(base.Spec.Mounts) {
+		t.Errorf("mounts = %+v, want only the base profile's %+v", merged.Mounts, base.Spec.Mounts)
+	}
+	if !merged.Network.DenyLAN {
+		t.Error("denyLAN = false after layering, want it to stay true")
+	}
+	var sawPyPI bool
+	for _, rule := range merged.Network.Allow {
+		if rule.Domain == "pypi.org" {
+			sawPyPI = true
+		}
+	}
+	if !sawPyPI {
+		t.Errorf("allow = %+v, want the ecosystem profile's pypi.org entry", merged.Network.Allow)
+	}
+}

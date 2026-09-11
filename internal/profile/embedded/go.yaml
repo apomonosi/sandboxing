@@ -1,0 +1,31 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: go
+  description: >-
+    Ecosystem profile: Go module proxy and checksum database access.
+    Carries egress entries only — no resources, mounts or mountPolicy — so
+    it composes on top of a base profile rather than replacing it:
+    --profile=default --profile=go
+spec:
+  network:
+    # See python.yaml: denyLAN is repeated in every ecosystem profile
+    # because Merge takes the override's value as-is.
+    denyLAN: true
+    allow:
+      - domain: "proxy.golang.org"
+        ports: [443]
+      # Module authentication; the go command consults it by default
+      # (GONOSUMDB/GOPRIVATE aside), so a build fails without it.
+      - domain: "sum.golang.org"
+        ports: [443]
+      - domain: "index.golang.org"
+        ports: [443]
+      # proxy.golang.org serves some module archives by 302-redirecting to
+      # Google Cloud Storage, so downloads fail intermittently without
+      # this. It is a deliberately broad grant — storage.googleapis.com is
+      # shared by every GCS bucket, not just Go's — so drop it if your
+      # setup uses a private GOPROXY that serves archives directly.
+      - domain: "storage.googleapis.com"
+        ports: [443]
+    ports: []

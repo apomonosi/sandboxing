@@ -97,12 +97,7 @@ on every start.`,
 // after the instance was created takes effect at the next boot rather than
 // being frozen at create time.
 func resolveStartMounts(cmd *cobra.Command, name string, profiles []string, flags mountFlags, preview bool) ([]provider.Mount, error) {
-	if len(profiles) == 0 {
-		if def := configFromContext(cmd.Context()).DefaultProfile; def != "" {
-			profiles = []string{def}
-		}
-	}
-	policy, err := spec.ResolvePolicy(profiles, profileDirFlag(cmd), profile.Policy{})
+	policy, err := spec.ResolvePolicy(resolveProfileNames(cmd, profiles), profileDirFlag(cmd), profile.Policy{})
 	if err != nil {
 		return nil, err
 	}

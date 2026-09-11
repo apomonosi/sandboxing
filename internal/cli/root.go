@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apomonosi/sandboxing/internal/config"
+	"github.com/apomonosi/sandboxing/internal/profile"
 	"github.com/apomonosi/sandboxing/internal/provider"
 )
 
@@ -106,6 +107,32 @@ func resolveProvider(cmd *cobra.Command) (provider.Provider, string, error) {
 		return nil, name, err
 	}
 	return p, name, nil
+}
+
+// resolveProfileNames returns the profiles a command should apply, in
+// precedence order: explicit --profile flags, else the configured
+// defaultProfile, else the built-in "default".
+//
+// That last fallback is the important one. Without it, a create with no
+// --profile and no configured defaultProfile resolved against an empty
+// policy: no resource limits, and — since the built-in profiles are where
+// the per-instance workspace mount is declared — no host directory at
+// all. An agent installed via --agent would come up with nowhere to work.
+// Falling back to "default" is not a widening: it is default-deny egress
+// with LAN blocked, so it constrains an instance that previously had no
+// policy attached.
+//
+// A file-based profile named "default" in the search paths still wins
+// over the built-in, since this only chooses a name and LoadNamed
+// resolves it (see profile.SearchPaths).
+func resolveProfileNames(cmd *cobra.Command, explicit []string) []string {
+	if len(explicit) > 0 {
+		return explicit
+	}
+	if def := configFromContext(cmd.Context()).DefaultProfile; def != "" {
+		return []string{def}
+	}
+	return []string{profile.Default}
 }
 
 func jsonOutput(cmd *cobra.Command) bool {

@@ -34,7 +34,11 @@ func TestCLI_CreateWithMount(t *testing.T) {
 	src := mustMkdir(t, filepath.Join(home, "src", "project"))
 	p := fake.New()
 
-	out, err := execute(t, p, "create", "demo", "--image=ubuntu", "--mount", src+":/workspace:w")
+	// --mount-only, not --mount: a bare create now resolves against the
+	// built-in "default" profile, which declares its own /workspace mount,
+	// and a plain --mount would accumulate on top of it and be rejected as
+	// overlapping. Replacing the profile's mounts is what this test means.
+	out, err := execute(t, p, "create", "demo", "--image=ubuntu", "--mount-only", src+":/workspace:w")
 	if err != nil {
 		t.Fatalf("create: %v (%s)", err, out)
 	}
@@ -188,7 +192,10 @@ func TestCLI_CreateBlocksWhenMountUnsupported(t *testing.T) {
 		Message: "no host-directory share primitive",
 	})
 
-	out, err := execute(t, p, "create", "demo", "--image=ubuntu", "--mount", src+":/workspace")
+	// --mount-only so this reaches the capability gate: a plain --mount
+	// would collide with the default profile's own /workspace mount and
+	// fail during resolution, before the gate ever runs.
+	out, err := execute(t, p, "create", "demo", "--image=ubuntu", "--mount-only", src+":/workspace")
 	if err == nil {
 		t.Fatalf("create = nil error on a backend without fs.mount, want a capability block (%s)", out)
 	}
@@ -229,5 +236,56 @@ func assertSingleMount(t *testing.T, p *fake.Provider, wantHostPath string) {
 	}
 	if inst.Mounts[0].HostPath != wantHostPath {
 		t.Errorf("mounted %q, want %q", inst.Mounts[0].HostPath, wantHostPath)
+	}
+}
+
+// TestCLI_BareCreateAppliesBuiltinDefault is the behavior this fallback
+// exists for: with no --profile and no configured defaultProfile, a
+// create used to resolve against an empty policy — no resource limits and
+// no workspace mount, so an --agent install came up with nowhere to work.
+// It must now pick up the built-in "default".
+func TestCLI_BareCreateAppliesBuiltinDefault(t *testing.T) {
+	useIsolatedConfig(t)
+	home := useIsolatedHome(t)
+	p := fake.New()
+
+	out, err := execute(t, p, "create", "demo", "--image=ubuntu")
+	if err != nil {
+		t.Fatalf("create: %v (%s)", err, out)
+	}
+	inst, err := p.Status(t.Context(), "demo")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(inst.Mounts) != 1 || inst.Mounts[0].GuestPath != "/workspace" {
+		t.Fatalf("instance mounts = %+v, want the built-in default's workspace mount", inst.Mounts)
+	}
+	if !strings.HasPrefix(inst.Mounts[0].HostPath, home) {
+		t.Errorf("host path = %q, want it under the temporary home %q", inst.Mounts[0].HostPath, home)
+	}
+	if len(inst.Profiles) != 1 || inst.Profiles[0] != "default" {
+		t.Errorf("instance profiles = %v, want [default]", inst.Profiles)
+	}
+}
+
+// An explicitly configured defaultProfile still wins over the built-in
+// fallback — the fallback is a last resort, not an override.
+func TestCLI_ConfiguredDefaultProfileWinsOverBuiltin(t *testing.T) {
+	useIsolatedConfig(t)
+	useIsolatedHome(t)
+	p := fake.New()
+
+	if out, err := execute(t, p, "config", "set", "defaultProfile=strict"); err != nil {
+		t.Fatalf("config set: %v (%s)", err, out)
+	}
+	if out, err := execute(t, p, "create", "demo", "--image=ubuntu"); err != nil {
+		t.Fatalf("create: %v (%s)", err, out)
+	}
+	inst, err := p.Status(t.Context(), "demo")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(inst.Profiles) != 1 || inst.Profiles[0] != "strict" {
+		t.Errorf("instance profiles = %v, want [strict]", inst.Profiles)
 	}
 }

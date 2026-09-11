@@ -309,7 +309,14 @@ func checkOverlap(mounts []provider.Mount) []error {
 			a, b := mounts[i], mounts[j]
 			switch {
 			case a.GuestPath == b.GuestPath:
-				errs = append(errs, fmt.Errorf("mounts %s and %s both mount at guestPath %s", a.HostPath, b.HostPath, a.GuestPath))
+				// The common way to hit this is a --mount at the same guest
+				// path as the active profile's own workspace mount, since
+				// --mount accumulates on top of a profile rather than
+				// replacing it. Name the escape hatch here: the error is
+				// otherwise accurate but gives no hint what to do about it.
+				errs = append(errs, fmt.Errorf(
+					"mounts %s and %s both mount at guestPath %s (use --mount-only to replace the profile's mounts instead of adding to them)",
+					a.HostPath, b.HostPath, a.GuestPath))
 			case withinPosix(a.GuestPath, b.GuestPath), withinPosix(b.GuestPath, a.GuestPath):
 				errs = append(errs, fmt.Errorf("guestPaths %s and %s overlap", a.GuestPath, b.GuestPath))
 			case within(a.HostPath, b.HostPath), within(b.HostPath, a.HostPath):

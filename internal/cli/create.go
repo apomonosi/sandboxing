@@ -61,11 +61,7 @@ func newCreateCmd() *cobra.Command {
 			if resolvedImage == "" {
 				return fmt.Errorf("either --image or --spec is required")
 			}
-			if len(profileNames) == 0 {
-				if def := configFromContext(cmd.Context()).DefaultProfile; def != "" {
-					profileNames = []string{def}
-				}
-			}
+			profileNames = resolveProfileNames(cmd, profileNames)
 
 			var agentSpec agent.Spec
 			if agentName != "" {

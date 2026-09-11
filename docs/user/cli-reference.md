@@ -112,9 +112,13 @@ cloud-init package list. `pull` supports `--preview`/`--dry-run`.
 
 ### `agentctl profile list` / `agentctl profile show <name>` / `agentctl profile set <name>`
 
-List available profiles (built-in `default`/`strict` plus any file-based
-ones), print one's resolved contents, or set the default profile applied
-when `create` is given no `--profile`/`--spec`.
+List available profiles (the built-ins `default`, `strict`, `python`, `node`,
+`go`, `rust` plus any file-based ones), print one's resolved contents, or set
+the default profile applied when `create` is given no `--profile`/`--spec`.
+
+With no `--profile` and no configured `defaultProfile`, commands fall back to
+the built-in `default` — see
+[Which profile applies](profiles-and-policies.md#which-profile-applies-when-you-dont-name-one).
 
 ## Configuration
 
