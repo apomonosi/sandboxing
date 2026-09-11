@@ -46,8 +46,21 @@ since "allow this host, but not the LAN" can't be expressed in a single ACL.
 
 ## Nothing in the sandbox can reach the network / `curl` fails during an agent install
 
-Work through these in order — the first two are host-side and far more common
+Run the diagnostic first — it walks every layer below and prints which one is
+at fault, changing nothing:
+
+```console
+$ scripts/diagnose-incus-network.sh <name>
+```
+
+The manual version, in order. The first two are host-side and far more common
 than a problem with the policy itself.
+
+**0. Rule agentctl out entirely.** If `--no-network-policy` also has no
+network, no ACL was ever created or attached, so the cause is below agentctl —
+skip to step 1 and treat it as a plain Incus networking problem. Note that
+`incus exec` on a **VM** goes over vsock rather than the network, so exec
+working tells you nothing about connectivity.
 
 **1. On Fedora/RHEL, check firewalld.** If the guest has an IPv6 address but no
 IPv4 one, firewalld is blocking DHCP on the bridge. See
