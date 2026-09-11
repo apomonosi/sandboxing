@@ -36,6 +36,8 @@ $ claude --version
 |---|---|---|---|
 | `claude` | Claude Code | `ANTHROPIC_API_KEY` | `claude.ai`, `*.anthropic.com` |
 | `codex` | OpenAI Codex CLI | `OPENAI_API_KEY` | `chatgpt.com`, `api.openai.com` |
+| `cursor` | Cursor CLI (`cursor-agent`) | `CURSOR_API_KEY` | `cursor.com`, `api2.cursor.sh`, `*.cursorapi.com` |
+| `gemini` | Gemini CLI | `GEMINI_API_KEY` | `registry.npmjs.org`, `generativelanguage.googleapis.com`, `accounts.google.com`, `oauth2.googleapis.com` |
 | `opencode` | opencode | *(multi-provider — none)* | `opencode.ai` |
 | `pi` | pi | `ANTHROPIC_API_KEY` *(default provider)* | `pi.dev`, `*.anthropic.com` |
 
@@ -46,6 +48,31 @@ only guarantee the *install* domain (`pi` additionally covers its
 default-provider runtime domain) — if you point either at a different
 model provider, extend the allowlist the same way you would for anything
 else: `agentctl create demo --agent=opencode --allow=<your-provider-domain>:443`.
+
+### `gemini` needs Node.js already in the guest
+
+Google documents no curl-based installer for Gemini CLI — only npm, npx and
+Homebrew — so `--agent=gemini` runs `npm install -g @google/gemini-cli` and
+**requires Node.js 20+ to already be present in the image**. None of the base
+images used throughout these docs (`images:ubuntu/24.04`, `images:alpine/edge`,
+`template://ubuntu-lts`) ship Node, so on a bare image this fails with
+`npm: command not found` rather than installing anything.
+
+agentctl deliberately does not bootstrap Node for you: that would be inventing
+an install path the agent's own documentation doesn't describe. Install Node
+first — `agentctl exec --root demo -- apt-get install -y nodejs npm`, or use an
+image that already has it — then `agentctl start demo` retries the pending
+install automatically (see below).
+
+### `cursor` may need more domains than the table lists
+
+Cursor spreads runtime traffic across more hosts than the other agents. The
+entry above covers install plus the primary API path (`api2.cursor.sh`), but
+Cursor's own network-configuration docs also name `api3`/`api4`/`api5`,
+`repo42.cursor.sh`, the `*.authentication.cursor.sh` hosts and
+`*.cursor-cdn.com` as needed in some setups. If something fails to connect,
+extend the allowlist the same way as for a multi-provider agent:
+`agentctl create demo --agent=cursor --allow='*.cursor.sh:443'`.
 
 ## What it doesn't do (yet)
 

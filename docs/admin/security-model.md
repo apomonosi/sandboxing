@@ -98,7 +98,14 @@ resulting policy shows exactly what was added, same as any other `--allow`
 entry. Two multi-provider agents (`opencode`, `pi`) are documented as only
 guaranteeing their install domain (plus, for `pi`, its default-provider
 runtime domain) — extending the allowlist further for a different model
-provider is on you, the same as it would be without `--agent`.
+provider is on you, the same as it would be without `--agent`. `cursor` is
+partial for a different reason: its vendor spreads runtime traffic across
+more hosts than the entry lists, so the same "extend it yourself" caveat
+applies. Note also that `--agent=gemini` widens the allowlist to include
+`registry.npmjs.org`, since Gemini CLI installs from npm rather than a
+vendor-hosted script — a package registry is a broader grant than a single
+vendor domain, and worth weighing if your threat model cares about what an
+agent can pull in at install time.
 
 ## Why raw X11 forwarding is excluded
 

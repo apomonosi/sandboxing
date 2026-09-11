@@ -3,7 +3,7 @@ package agent
 import "testing"
 
 func TestLookup_KnownAgents(t *testing.T) {
-	for _, name := range []string{"claude", "codex", "opencode", "pi"} {
+	for _, name := range []string{"claude", "codex", "cursor", "gemini", "opencode", "pi"} {
 		spec, ok := Lookup(name)
 		if !ok {
 			t.Fatalf("Lookup(%q): expected ok=true", name)
@@ -36,7 +36,7 @@ func TestLookup_Unknown(t *testing.T) {
 
 func TestNames_SortedAndComplete(t *testing.T) {
 	got := Names()
-	want := []string{"claude", "codex", "opencode", "pi"}
+	want := []string{"claude", "codex", "cursor", "gemini", "opencode", "pi"}
 	if len(got) != len(want) {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}

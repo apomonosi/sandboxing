@@ -35,12 +35,37 @@ type Spec struct {
 //   - codex:    https://learn.chatgpt.com/docs/codex/cli
 //   - opencode: https://opencode.ai/download
 //   - pi:       https://pi.dev/
+//   - gemini:   https://github.com/google-gemini/gemini-cli
+//   - cursor:   https://cursor.com/docs/cli/installation
 //
 // opencode and pi are explicitly multi-provider: their AllowDomains only
 // guarantee the install domain (opencode) or the install domain plus the
 // default-provider runtime domain (pi, which defaults to Anthropic but
 // supports others) — a user on a different provider extends the
 // allowlist the same way they would for anything else, via --allow.
+//
+// Two things about the entries below are worth knowing before relying on
+// them, because they differ from the curl-installer shape the first four
+// share:
+//
+//   - gemini is the only agent with no curl-based installer. Google
+//     documents npm/npx/Homebrew only, so InstallScript is the npm
+//     one-liner and the guest needs Node.js >= 20 already present —
+//     which the base images used throughout this project's docs
+//     (images:ubuntu/24.04, images:alpine/edge, template://ubuntu-lts)
+//     do not ship. On a bare image `--agent=gemini` fails with
+//     "npm: command not found" rather than installing anything. Left
+//     verbatim rather than silently bootstrapping Node, since that
+//     would be agentctl inventing an install path the agent's own docs
+//     don't describe; see docs/user/agent-provisioning.md.
+//   - cursor's runtime traffic is spread across more domains than any
+//     other entry here. Cursor's own network-configuration docs
+//     recommend *.cursor.sh, *.cursorapi.com and *.cursor-cdn.com, and
+//     name api2.cursor.sh as carrying most API requests, with
+//     api3/api4/api5, repo42 and authentication subdomains needed in
+//     some setups. The entry covers install plus the primary API path;
+//     anything beyond that is a --allow extension, same as the
+//     multi-provider agents above.
 var Registry = map[string]Spec{
 	"claude": {
 		Name:          "claude",
@@ -75,6 +100,36 @@ var Registry = map[string]Spec{
 		AllowDomains: []profile.AllowRule{
 			{Domain: "pi.dev", Ports: []int{443}},
 			{Domain: "*.anthropic.com", Ports: []int{443}},
+		},
+	},
+	"gemini": {
+		Name: "gemini",
+		// npm, not curl — see the Registry comment above. The guest must
+		// already have Node.js >= 20; this does not install it.
+		InstallScript: "npm install -g @google/gemini-cli",
+		// Gemini CLI documents three auth paths (GEMINI_API_KEY,
+		// GOOGLE_API_KEY + GOOGLE_GENAI_USE_VERTEXAI for Vertex AI, and
+		// GOOGLE_CLOUD_PROJECT for Code Assist). GEMINI_API_KEY is the
+		// one obvious default, which is what this field is for.
+		EnvVar: "GEMINI_API_KEY",
+		AllowDomains: []profile.AllowRule{
+			{Domain: "registry.npmjs.org", Ports: []int{443}},
+			{Domain: "generativelanguage.googleapis.com", Ports: []int{443}},
+			{Domain: "accounts.google.com", Ports: []int{443}},
+			{Domain: "oauth2.googleapis.com", Ports: []int{443}},
+		},
+	},
+	"cursor": {
+		Name: "cursor",
+		// Cursor's own documented form: flags after the URL, and no -L.
+		// Kept verbatim rather than normalized to match the other curl
+		// entries above.
+		InstallScript: "curl https://cursor.com/install -fsS | bash",
+		EnvVar:        "CURSOR_API_KEY",
+		AllowDomains: []profile.AllowRule{
+			{Domain: "cursor.com", Ports: []int{443}},
+			{Domain: "api2.cursor.sh", Ports: []int{443}},
+			{Domain: "*.cursorapi.com", Ports: []int{443}},
 		},
 	},
 }
