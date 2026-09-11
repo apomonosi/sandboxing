@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,5 +230,48 @@ func assertSingleMount(t *testing.T, p *fake.Provider, wantHostPath string) {
 	}
 	if inst.Mounts[0].HostPath != wantHostPath {
 		t.Errorf("mounted %q, want %q", inst.Mounts[0].HostPath, wantHostPath)
+	}
+}
+
+// preflightFake is a Provider that reports a host-configuration warning,
+// to check the CLI actually surfaces it. The real implementation lives in
+// internal/provider/incus; this only exercises the wiring.
+type preflightFake struct {
+	*fake.Provider
+	warnings []string
+}
+
+func (p *preflightFake) Preflight(ctx context.Context) []string { return p.warnings }
+
+func TestCLI_CreateSurfacesPreflightWarnings(t *testing.T) {
+	useIsolatedConfig(t)
+	useIsolatedHome(t)
+	p := &preflightFake{Provider: fake.New(), warnings: []string{"incusbr0 is in the wrong firewalld zone"}}
+
+	out, err := executeProvider(t, p, "create", "demo", "--image=ubuntu", "--mount-none")
+	if err != nil {
+		t.Fatalf("create: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "incusbr0 is in the wrong firewalld zone") {
+		t.Errorf("create output %q should surface the preflight warning", out)
+	}
+	if !strings.Contains(out, "WARNING") {
+		t.Errorf("preflight output %q should be marked as a warning", out)
+	}
+}
+
+// A backend that doesn't implement Preflighter must be skipped silently,
+// not crash or complain — same contract as CommandPreviewer.
+func TestCLI_CreateWithoutPreflighterIsSilent(t *testing.T) {
+	useIsolatedConfig(t)
+	useIsolatedHome(t)
+	p := fake.New()
+
+	out, err := execute(t, p, "create", "demo", "--image=ubuntu", "--mount-none")
+	if err != nil {
+		t.Fatalf("create: %v (%s)", err, out)
+	}
+	if strings.Contains(out, "WARNING") {
+		t.Errorf("a provider without Preflight should produce no warnings, got %q", out)
 	}
 }

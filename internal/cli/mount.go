@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -140,5 +141,22 @@ func renderMounts(w io.Writer, mounts []provider.Mount, jsonOutput bool) {
 			access = "writable"
 		}
 		fmt.Fprintf(w, "  %s -> %s (%s)\n", m.HostPath, m.GuestPath, access)
+	}
+}
+
+// renderPreflight prints any host-configuration warnings the active
+// provider reports. Backends that don't implement provider.Preflighter
+// are skipped entirely, the same way tryPreview handles CommandPreviewer.
+//
+// Warnings go to the command's own output rather than stderr so they
+// appear in the same stream as the rest of create's commentary, and are
+// prefixed like every other agentctl diagnostic.
+func renderPreflight(w io.Writer, p provider.Provider, ctx context.Context) {
+	pf, ok := p.(provider.Preflighter)
+	if !ok {
+		return
+	}
+	for _, warning := range pf.Preflight(ctx) {
+		fmt.Fprintf(w, "agentctl: WARNING %s\n", warning)
 	}
 }
