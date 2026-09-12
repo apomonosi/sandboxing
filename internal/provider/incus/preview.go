@@ -34,6 +34,13 @@ func cmd(args []string) provider.Command {
 // call that records the bootstrap script's resulting UID — that value
 // only exists after actually running the (mutating) bootstrap script, so
 // it can't be shown without lying about it.
+//
+// A fourth thing it cannot show exactly: when spec.Packages is non-empty,
+// the real install command's arguments depend on which package manager the
+// guest turns out to have, which is only knowable by asking a running
+// guest. Preview shows the detection exec, then the install exec with the
+// neutral tool names as given — flagged in the docs so nobody reads those
+// as the literal package names that will be installed.
 func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command {
 	var cmds []provider.Command
 	cmds = append(cmds, cmd(append([]string{"init"}, buildInitArgs(spec)...)))
@@ -47,7 +54,15 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 	for i, pp := range spec.Overrides.Ports {
 		cmds = append(cmds, cmd(buildPortProxyDeviceArgs(spec.Name, fmt.Sprintf("port%d", i), pp)))
 	}
-	cmds = append(cmds, p.previewNetworkPolicy(spec.Name, spec.Overrides)...)
+
+	// Mirrors Create's deferACL: with packages requested the policy is
+	// attached after provisioning, not before. Preview that showed the
+	// old order would be describing a different create than the one that
+	// runs.
+	deferACL := len(spec.Packages) > 0
+	if !deferACL {
+		cmds = append(cmds, p.previewNetworkPolicy(spec.Name, spec.Overrides)...)
+	}
 	cmds = append(cmds, cmd(buildStartArgs(spec.Name)))
 
 	username := spec.DefaultUser
@@ -55,7 +70,14 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 		username = defaultUsername
 	}
 	cmds = append(cmds, cmd(buildExecArgs(spec.Name, bootstrapUserCommand(username), nil)))
+	if len(spec.Packages) > 0 {
+		cmds = append(cmds, cmd(buildExecArgs(spec.Name, detectPkgMgrCommand(), nil)))
+		cmds = append(cmds, cmd(buildExecArgs(spec.Name, installPackagesCommand("<detected>", spec.Packages), nil)))
+	}
 	cmds = append(cmds, cmd(buildStopArgs(spec.Name, provider.StopOptions{Force: true})))
+	if deferACL {
+		cmds = append(cmds, p.previewNetworkPolicy(spec.Name, spec.Overrides)...)
+	}
 
 	return cmds
 }

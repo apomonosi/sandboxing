@@ -49,6 +49,29 @@ default-provider runtime domain) — if you point either at a different
 model provider, extend the allowlist the same way you would for anything
 else: `agentctl create demo --agent=opencode --allow=<your-provider-domain>:443`.
 
+## Tools the agent needs, that the image doesn't have
+
+`--agent` installs the agent and nothing else. Base images are minimal —
+`images:ubuntu/24.04` has no `git`, no compiler, no editor — so an agent
+that can run may still be unable to do much.
+
+Install them in the same `create`, with `--package` or a profile that
+bundles them:
+
+```console
+$ agentctl create demo --image=images:fedora/44 --profile=terminal --agent=claude
+```
+
+Packages are installed **before** the agent, so an agent whose installer
+needs a tool present (`--agent=gemini` needs `npm`) can get it the same
+way:
+
+```console
+$ agentctl create demo --image=images:ubuntu/24.04 --package=nodejs --package=npm --agent=gemini
+```
+
+See [Tools in the guest](profiles-and-policies.md#tools-in-the-guest-packages-and-the-terminalgui-tiers).
+
 ### `gemini` needs Node.js already in the guest
 
 Google documents no curl-based installer for Gemini CLI — only npm, npx and
@@ -59,10 +82,13 @@ images used throughout these docs (`images:ubuntu/24.04`, `images:alpine/edge`,
 `npm: command not found` rather than installing anything.
 
 agentctl deliberately does not bootstrap Node for you: that would be inventing
-an install path the agent's own documentation doesn't describe. Install Node
-first — `agentctl exec --root demo -- apt-get install -y nodejs npm`, or use an
-image that already has it — then `agentctl start demo` retries the pending
-install automatically (see below).
+an install path the agent's own documentation doesn't describe. Ask for it
+explicitly instead — `--package=nodejs --package=npm` on the same `create`
+(installed before the agent, so the install finds it), or use an image that
+already has it. If you've already hit the failure, install into the existing
+instance — `agentctl exec --root demo -- apt-get install -y nodejs npm` —
+and `agentctl start demo` retries the pending install automatically (see
+below).
 
 ### `cursor` may need more domains than the table lists
 

@@ -371,11 +371,50 @@ func TestExecUserArgs_NilIsRoot(t *testing.T) {
 	}
 }
 
+// testUser is the identity resolveExecUser would produce from the config
+// value "claude:1500:/home/claude".
+func testUser() *execUser {
+	return &execUser{name: "claude", uid: "1500", home: "/home/claude"}
+}
+
+// wantUserArgs is the full env block a non-root exec must carry. Spelled
+// out once here rather than rebuilt from loginPath(), so a change to
+// either is a visible test diff instead of a tautology.
+var wantUserArgs = []string{
+	"--user", "1500", "--group", "1500", "--cwd", "/home/claude",
+	"--env", "HOME=/home/claude",
+	"--env", "USER=claude",
+	"--env", "LOGNAME=claude",
+	"--env", "PATH=/home/claude/.local/bin:/home/claude/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+}
+
 func TestExecUserArgs_NonRoot(t *testing.T) {
-	got := execUserArgs(&execUser{uid: "1500", home: "/home/claude"})
-	want := []string{"--user", "1500", "--group", "1500", "--cwd", "/home/claude", "--env", "HOME=/home/claude"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("execUserArgs() = %v, want %v", got, want)
+	got := execUserArgs(testUser())
+	if !reflect.DeepEqual(got, wantUserArgs) {
+		t.Errorf("execUserArgs() = %v, want %v", got, wantUserArgs)
+	}
+}
+
+// TestExecUserArgs_PathCarriesUserLocalBin pins the specific regression
+// this PATH exists for: `incus exec` is not a login shell, so nothing
+// sources the profile snippet that puts ~/.local/bin on PATH — which is
+// where claude.ai/install.sh and most other agent installers put their
+// binary. Without this, the install succeeds and the binary is still
+// "command not found" on the very next exec.
+func TestExecUserArgs_PathCarriesUserLocalBin(t *testing.T) {
+	var path string
+	args := execUserArgs(testUser())
+	for i, a := range args {
+		if a == "--env" && i+1 < len(args) && strings.HasPrefix(args[i+1], "PATH=") {
+			path = strings.TrimPrefix(args[i+1], "PATH=")
+		}
+	}
+	if path == "" {
+		t.Fatal("execUserArgs emitted no PATH; agent binaries under ~/.local/bin will not be found")
+	}
+	first, _, _ := strings.Cut(path, ":")
+	if first != "/home/claude/.local/bin" {
+		t.Errorf("PATH starts with %q, want the user's ~/.local/bin first so it shadows a system copy", first)
 	}
 }
 
@@ -386,24 +425,26 @@ func TestBuildExecArgs_RootVsNonRoot(t *testing.T) {
 		t.Errorf("buildExecArgs(nil) = %v, want %v", root, wantRoot)
 	}
 
-	nonRoot := buildExecArgs("demo", []string{"echo", "hi"}, &execUser{uid: "1500", home: "/home/claude"})
-	wantNonRoot := []string{"exec", "demo", "--user", "1500", "--group", "1500", "--cwd", "/home/claude",
-		"--env", "HOME=/home/claude", "--", "echo", "hi"}
+	nonRoot := buildExecArgs("demo", []string{"echo", "hi"}, testUser())
+	wantNonRoot := append(append([]string{"exec", "demo"}, wantUserArgs...), "--", "echo", "hi")
 	if !reflect.DeepEqual(nonRoot, wantNonRoot) {
 		t.Errorf("buildExecArgs(execUser) = %v, want %v", nonRoot, wantNonRoot)
 	}
 }
 
+// Both shells must be login shells (-l): a bare `incus exec -- /bin/bash`
+// is interactive but not a login, so /etc/profile, /etc/profile.d/* and
+// ~/.bash_profile are never sourced and the shell comes up without the
+// distro's PATH, prompt or locale.
 func TestBuildShellArgs_RootVsNonRoot(t *testing.T) {
 	root := buildShellArgs("demo", nil)
-	wantRoot := []string{"exec", "demo", "--", "/bin/bash"}
+	wantRoot := []string{"exec", "demo", "--", "/bin/bash", "-l"}
 	if !reflect.DeepEqual(root, wantRoot) {
 		t.Errorf("buildShellArgs(nil) = %v, want %v", root, wantRoot)
 	}
 
-	nonRoot := buildShellArgs("demo", &execUser{uid: "1500", home: "/home/claude"})
-	wantNonRoot := []string{"exec", "demo", "--user", "1500", "--group", "1500", "--cwd", "/home/claude",
-		"--env", "HOME=/home/claude", "--", "/bin/bash"}
+	nonRoot := buildShellArgs("demo", testUser())
+	wantNonRoot := append(append([]string{"exec", "demo"}, wantUserArgs...), "--", "/bin/bash", "-l")
 	if !reflect.DeepEqual(nonRoot, wantNonRoot) {
 		t.Errorf("buildShellArgs(execUser) = %v, want %v", nonRoot, wantNonRoot)
 	}

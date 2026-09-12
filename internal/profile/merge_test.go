@@ -128,3 +128,25 @@ func TestMerge_ZeroOverrideDoesNotResetMountPolicy(t *testing.T) {
 		t.Error("CreateMissing = false, want the base's true to survive")
 	}
 }
+
+func TestMerge_PackagesAreAdditiveAndDeduped(t *testing.T) {
+	base := Policy{Packages: []string{"git", "curl"}}
+	override := Policy{Packages: []string{"curl", "ripgrep"}}
+
+	got := Merge(base, override).Packages
+	want := []string{"git", "curl", "ripgrep"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Merge().Packages = %v, want %v", got, want)
+	}
+}
+
+// A create with no --package produces a zero-valued override layer. That
+// layer must not wipe the tools an org profile asked for — the same trap
+// mountPolicy's pointer-valued AllowHome exists to avoid.
+func TestMerge_EmptyOverrideKeepsBasePackages(t *testing.T) {
+	base := Policy{Packages: []string{"git"}}
+	got := Merge(base, Policy{}).Packages
+	if !reflect.DeepEqual(got, []string{"git"}) {
+		t.Errorf("Merge(base, empty).Packages = %v, want [git]", got)
+	}
+}

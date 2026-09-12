@@ -36,6 +36,15 @@ type fakeRunner struct {
 	// listJSON overrides the canned `incus list` response, for tests that
 	// need the instance to report devices (see ApplyMountPolicy).
 	listJSON string
+	// pkgMgr is what detect-pkgmgr.sh reports back. "" means apt (the
+	// common case); "dnf"/"apk" select the other families; "none" makes
+	// the script report an empty value, as it does on an image with no
+	// package manager agentctl drives; any other value exercises the
+	// unsupported-manager path.
+	pkgMgr string
+	// installFailCode, when non-zero, makes install-packages.sh exit with
+	// that code so the failure path can be tested.
+	installFailCode int
 }
 
 func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
@@ -72,21 +81,53 @@ func isAgentProbe(args []string) bool {
 	return len(args) == 4 && args[0] == "exec" && args[2] == "--" && args[3] == "true"
 }
 
+// RunStream fakes the three stdin-piped `sh -s` provisioning calls.
+//
+// Which one is running can't be told from argv alone —
+// bootstrapUserCommand and installPackagesCommand are both
+// {"sh","-s","--",...} — so the fake reads the piped script and dispatches
+// on that, exactly the way the guest would. The script content is also
+// what makes this a real check: a test passes only if the provider piped
+// the script it claims to be running.
 func (f *fakeRunner) RunStream(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	f.calls = append(f.calls, append([]string{name}, args...))
-	if isBootstrapCall(args) {
-		// bootstrapUserCommand(username) = {"sh", "-s", "--", username};
-		// report a fixed UID so Create()'s provisionDefaultUser has
-		// something to parse, mirroring the real script's last line.
-		if w, ok := stdout.(*bytes.Buffer); ok {
-			w.WriteString("AGENTCTL_UID=1500\n")
+
+	var script string
+	if stdin != nil {
+		if data, err := io.ReadAll(stdin); err == nil {
+			script = string(data)
 		}
 	}
-	return 0, nil
-}
+	if f.installFailCode != 0 && script == installPackagesScript {
+		if w, ok := stderr.(*bytes.Buffer); ok {
+			w.WriteString("Error: Unable to find a match: no-such-package\n")
+		}
+		return f.installFailCode, nil
+	}
 
-func isBootstrapCall(args []string) bool {
-	return contains(args, "sh") && contains(args, "-s")
+	reply := func(s string) {
+		if w, ok := stdout.(*bytes.Buffer); ok {
+			w.WriteString(s)
+		}
+	}
+	switch script {
+	case bootstrapUserScript:
+		// Mirrors the real script's last line, so provisionDefaultUser has
+		// something to parse.
+		reply("AGENTCTL_UID=1500\n")
+	case detectPkgMgrScript:
+		mgr := f.pkgMgr
+		switch mgr {
+		case "":
+			mgr = "apt"
+		case "none":
+			// What the real script prints on an image with no package
+			// manager it drives: an empty value, exit 0.
+			mgr = ""
+		}
+		reply("AGENTCTL_PKGMGR=" + mgr + "\n")
+	}
+	return 0, nil
 }
 
 // TestRealDispatch_MatchesPreview is the guard against preview output
@@ -299,7 +340,7 @@ func TestExec_NonRootUser_UsesResolvedUIDAndHome(t *testing.T) {
 	if _, err := p.Exec(context.Background(), "demo", provider.ExecOptions{Command: []string{"true"}}); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
-	want := append([]string{binary}, buildExecArgs("demo", []string{"true"}, &execUser{uid: "1500", home: "/home/claude"})...)
+	want := append([]string{binary}, buildExecArgs("demo", []string{"true"}, testUser())...)
 	assertLastCall(t, fr, want)
 }
 

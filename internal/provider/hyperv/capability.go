@@ -38,6 +38,7 @@ func buildCapabilities() provider.Table {
 	underDev(provider.FeatureDenyLAN, "Same native primitive as network.acl (Extended Port ACLs); agentctl hasn't wired it up yet.")
 	underDev(provider.FeatureImagePull, "agentctl hasn't wired a signed/checksummed VHDX pull path up yet.")
 	underDev(provider.FeatureImageBuild, "agentctl hasn't wired a Hyper-V unattended-install JIT build path up yet.")
+	underDev(provider.FeaturePackages, "Needs a working exec path first (PowerShell Direct); agentctl's Hyper-V backend isn't implemented yet.")
 	underDev(provider.FeatureLogsNetwork, "Hyper-V Extended ACL logging and port mirroring are native; agentctl hasn't wired log collection up yet.")
 	underDev(provider.FeatureLogsExec, "agentctl hasn't wired exec history collection up yet.")
 

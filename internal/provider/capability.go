@@ -65,8 +65,15 @@ const (
 	FeatureMountReadOnly Feature = "fs.mount.readonly"
 	FeatureImagePull     Feature = "image.pull"
 	FeatureImageBuild    Feature = "image.build"
-	FeatureLogsNetwork   Feature = "logs.network"
-	FeatureLogsExec      Feature = "logs.exec"
+	// FeaturePackages is `packages:` / --package: installing tools into the
+	// guest during create. Its own feature rather than part of
+	// FeatureCreate because the mechanics diverge sharply per backend —
+	// Incus provisions through `incus exec` against a briefly-started
+	// instance, while Lima never starts an instance during create at all
+	// and would have to go through its template's own provision hooks.
+	FeaturePackages    Feature = "provision.packages"
+	FeatureLogsNetwork Feature = "logs.network"
+	FeatureLogsExec    Feature = "logs.exec"
 )
 
 // AllFeatures is the closed set of every Feature a provider must have an
@@ -80,6 +87,7 @@ var AllFeatures = []Feature{
 	FeatureNetworkACL, FeatureDenyLAN, FeaturePortPublish,
 	FeatureMount, FeatureMountReadOnly,
 	FeatureImagePull, FeatureImageBuild,
+	FeaturePackages,
 	FeatureLogsNetwork, FeatureLogsExec,
 }
 

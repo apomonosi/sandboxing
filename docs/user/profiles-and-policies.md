@@ -130,6 +130,68 @@ the guest.
   `agentctl view`'s console access is unaffected — it doesn't go through a
   guest user context at all.
 
+## Tools in the guest: `packages:` and the `terminal`/`gui` tiers
+
+Base images are deliberately minimal — `images:ubuntu/24.04` has no `git`,
+no compiler, no editor. A profile's `packages:` list (and the matching
+repeatable `--package` flag) installs tools into the guest during `create`,
+before any `--agent` install runs:
+
+```console
+$ agentctl create demo --image=images:fedora/44 --package=git --package=ripgrep
+```
+
+Names are **neutral**, not distro package names: agentctl asks the guest
+which package manager it has and maps each one onto that distribution's
+real package, so the same profile works on Ubuntu, Fedora and Alpine.
+`agentctl profile packages` prints the table.
+
+Two built-in profiles bundle sensible sets:
+
+| Profile | What it installs |
+|---|---|
+| `terminal` | `git`, `curl`, `ca-certificates`, `openssh-client`, `ripgrep`, `jq`, `unzip`, `tar`, `less`, `vim`, `procps`, `make`, `gcc`, `python3`, `shellcheck` |
+| `gui` | everything in `terminal`, plus `xorg`, `xinit`, `openbox`, `xterm` |
+
+```console
+$ agentctl create demo --image=images:fedora/44 --profile=terminal --agent=claude
+```
+
+Both carry exactly the same network, resource and mount policy as
+`default` — they differ only in what they install, and neither relaxes
+`denyLAN`. Neither inherits from the other: each is a complete policy you
+can read top to bottom.
+
+Language-specific linters are deliberately absent from `terminal`.
+`shellcheck` is there because shell is the one language every guest already
+runs; `eslint`, `ruff`, `golangci-lint` and friends belong to their own
+ecosystem's package manager, and pinning distro versions of them would be
+worse than letting a project install what it needs.
+
+!!! note "`packages:` is not a security control"
+    It is the one field in a profile that *adds* capability rather than
+    restricting it. A short list doesn't stop a sandbox installing
+    software — the network policy does. See the
+    [schema reference](../reference/profile-schema.md#packages) for how
+    requesting packages changes when the network ACL is attached.
+
+### What `gui` gives you
+
+A display that can be driven, not a desktop that comes up on its own.
+There is no display manager and no autologin, so nothing starts X for you:
+
+```console
+$ agentctl view demo      # opens the console
+# ...log in, then:
+$ startx
+```
+
+A display manager is a much larger surface to add to a sandbox, and adding
+one implicitly wasn't worth it. If you're pointing this at a GUI coding
+agent, check first that the agent actually ships a Linux build — several
+of the desktop agents are macOS/Windows only, with Linux packaging done by
+third parties.
+
 ## Combining a profile with ad-hoc flags
 
 Flags on `create` always win over a profile's settings, and list-valued
@@ -150,7 +212,7 @@ and publishes port 9000 in addition to anything the profile already defined.
 2. `~/.config/agentctl/profiles/<name>.yaml` (personal)
 3. the configured `profileDir` (org-distributed — see
    [Distributing Profiles Org-Wide](../admin/distributing-profiles.md))
-4. embedded built-ins (`default`, `strict`)
+4. embedded built-ins (`default`, `strict`, `terminal`, `gui`)
 
 ## Strict decoding
 

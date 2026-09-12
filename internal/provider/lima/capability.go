@@ -50,6 +50,16 @@ func buildCapabilities() provider.Table {
 	supported(provider.FeatureMount)
 	supported(provider.FeatureMountReadOnly)
 
+	// Lima can do this natively — a template's `provision:` scripts run at
+	// first boot — but that is a different mechanism from Incus's, not the
+	// same one unwired. Incus installs packages through `incus exec`
+	// against an instance Create already starts and stops; Lima's Create
+	// deliberately never starts anything (see lima.go), so wiring this up
+	// means generating a provision entry through the `--set` mechanism
+	// translate.go's package NOTE already flags as unverified. Left
+	// honestly undone rather than shipped on an assumption.
+	underDev(provider.FeaturePackages, "Lima supports this natively via a template's provision: scripts; agentctl hasn't wired that path up yet — install with `limactl shell <name> -- sudo <pkgmgr> install ...` for now.")
+
 	underDev(provider.FeatureView, "Lima has no first-class GUI console; agentctl plans a dedicated VNC bridge against the VM's own display, not yet built.")
 	underDev(provider.FeatureImageBuild, "agentctl hasn't wired a Lima cloud-init JIT build path up yet.")
 	underDev(provider.FeatureLogsExec, "agentctl hasn't wired exec history collection up yet.")

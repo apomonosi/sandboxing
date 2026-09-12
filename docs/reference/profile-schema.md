@@ -47,7 +47,65 @@ spec:
     viewer: string               # advisory: "spice" | "vnc" | "native" — the
                                   # provider decides the actual mechanism it's
                                   # capable of; see view-and-console.md
+  packages: [string]              # tools installed into the guest during
+                                   # create; see "Packages" below
 ```
+
+## Packages
+
+`packages:` is the one field here that *adds* something to a sandbox rather
+than restricting what it may do. It is not a security control and can't be
+used as one — a profile author who wants to stop a sandbox installing
+software has to do that through the network policy, not by leaving this
+list short.
+
+Entries are **neutral tool names**, not distro package names. agentctl asks
+the guest which package manager it has and maps each name onto that
+distribution's real package (`internal/packages`), so one profile installs
+correctly on Ubuntu, Fedora and Alpine alike:
+
+```yaml
+spec:
+  packages:
+    - git
+    - openssh-client   # openssh-clients on Fedora, openssh-client elsewhere
+    - shellcheck       # ShellCheck on Fedora
+```
+
+Run `agentctl profile packages` for the full table of names and what each
+one installs per distribution. A name that isn't in the table is passed to
+the guest's package manager verbatim, which works but ties the profile to
+one distribution.
+
+Supported package managers are **apt, dnf and apk** — the families the
+images used throughout these docs belong to. A guest with anything else
+fails the create with a message naming the three, rather than guessing at
+package names that were never verified.
+
+### Ordering, and what it means for the network policy
+
+Packages are installed during `create`, in the window where the instance is
+already briefly running to provision the non-root user, and **before** any
+`--agent` install.
+
+When a create requests packages, the network ACL is attached *after* that
+install rather than before it. This is deliberate. Distribution mirrors are
+CDN-backed and rotate their addresses; agentctl's allow rules are resolved
+host-side at create time and pin the addresses they saw, so a mirror that
+hands the guest a different edge address than the host got is simply
+unreachable. Rather than ask every profile to allowlist an unpinnable
+moving target, provisioning runs against the backend's default
+connectivity and the policy is attached as soon as it finishes.
+
+The window is real and worth understanding: during it the guest has
+whatever egress the host's bridge allows. Nothing runs in it except the
+distribution's own package manager and agentctl's two embedded scripts; no
+agent code and no user code has run yet, and the instance is not handed
+over until the policy is on. `agentctl create` says so on stdout rather
+than reordering silently, and `--preview` shows the reordered sequence.
+
+A create with no packages keeps exactly the previous order — ACL first,
+then the first boot.
 
 ## Size string format
 
@@ -170,6 +228,11 @@ profile with ad-hoc `create` flags:
 
 - `network.allow`, `network.ports`, `mounts`: **additive union** — override
   entries are appended after base's
+- `packages`: **additive union, deduped** — no layer can withdraw a tool an
+  earlier one asked for, and two layers both asking for `git` install it
+  once. Plain accumulation rather than `mountPolicy`'s narrow-only
+  asymmetry, because nothing here is load-bearing for security: packages add
+  software, they don't relax a restriction
 - `network.denyLAN`: override's value is taken as-is (the CLI resolves
   `--deny-lan`/`--allow-lan` against the profile's value before calling Merge)
 - `resources.*`, `console.viewer`: override's value wins whenever it's

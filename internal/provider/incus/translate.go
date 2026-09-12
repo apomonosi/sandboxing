@@ -90,18 +90,61 @@ func buildDeleteArgs(name string, force bool) []string {
 // default to /root regardless of --user — so both must be set explicitly
 // whenever uid is non-root.
 type execUser struct {
+	name string
 	uid  string
 	home string
+}
+
+// basePath is the PATH a bare `incus exec` starts from — the conventional
+// system set, with nothing user-specific in it.
+const basePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// loginPath reconstructs the PATH a *login* shell would have produced for
+// home, because `incus exec` never produces one.
+//
+// This is the fix for a failure that looked like the agent install had
+// silently done nothing. `incus exec` runs its command directly — it is
+// not a login shell and not even an interactive one — so /etc/profile,
+// /etc/profile.d/*, ~/.bash_profile and ~/.profile are never sourced.
+// Every one of those is where a distro puts "$HOME/.local/bin" on PATH
+// (Fedora does it in /etc/profile.d/, Debian in the skel ~/.profile), and
+// "$HOME/.local/bin" is exactly where claude.ai/install.sh and most other
+// agent installers drop their binary. So the install genuinely succeeded
+// and the very next `agentctl exec demo -- claude` still reported command
+// not found.
+//
+// Prepending the two user-local directories explicitly is deliberate,
+// rather than wrapping the command in `sh -lc`: a login-shell wrapper
+// would re-parse the caller's argv through a shell, which changes what
+// `agentctl exec demo -- <cmd>` means and reintroduces exactly the
+// quoting hazards bootstrap-user.sh is piped over stdin to avoid. The
+// cost is that a PATH entry added by a *custom* /etc/profile.d snippet
+// still won't be visible to `exec` — but it never was, and `shell` (a
+// real login shell, below) picks it up.
+func loginPath(home string) string {
+	return home + "/.local/bin:" + home + "/bin:" + basePath
 }
 
 // execUserArgs returns the --user/--group/--cwd/--env flags for u, or
 // nil for root (matching Incus's own default exec behavior exactly, so
 // omitting these flags entirely is correct, not just "empty").
+//
+// USER/LOGNAME are set alongside HOME because they are equally absent
+// from a bare exec, and tools that shell out to `git` or write per-user
+// caches read them.
 func execUserArgs(u *execUser) []string {
 	if u == nil {
 		return nil
 	}
-	return []string{"--user", u.uid, "--group", u.uid, "--cwd", u.home, "--env", "HOME=" + u.home}
+	return []string{
+		"--user", u.uid,
+		"--group", u.uid,
+		"--cwd", u.home,
+		"--env", "HOME=" + u.home,
+		"--env", "USER=" + u.name,
+		"--env", "LOGNAME=" + u.name,
+		"--env", "PATH=" + loginPath(u.home),
+	}
 }
 
 func buildExecArgs(name string, command []string, u *execUser) []string {
@@ -110,9 +153,18 @@ func buildExecArgs(name string, command []string, u *execUser) []string {
 	return append(args, command...)
 }
 
+// buildShellArgs asks for a *login* shell (-l), not a bare one.
+//
+// `incus exec <name> -- /bin/bash` gives an interactive shell, so bash
+// sources ~/.bashrc — but not /etc/profile, /etc/profile.d/* or
+// ~/.bash_profile, which are login-only and are where a distro sets up
+// PATH, prompt and locale. The result was a shell that looked subtly
+// wrong and couldn't find anything installed under ~/.local/bin. See
+// loginPath above for the same problem on the non-interactive `exec`
+// path, which cannot be fixed this way.
 func buildShellArgs(name string, u *execUser) []string {
 	args := append([]string{"exec", name}, execUserArgs(u)...)
-	return append(args, "--", "/bin/bash")
+	return append(args, "--", "/bin/bash", "-l")
 }
 
 // bootstrapUserCommand is the command Create() execs (as root — bootstrap
@@ -122,6 +174,21 @@ func buildShellArgs(name string, u *execUser) []string {
 // sh's positional $1 via `-s --`.
 func bootstrapUserCommand(username string) []string {
 	return []string{"sh", "-s", "--", username}
+}
+
+// detectPkgMgrCommand runs detectPkgMgrScript, which prints one
+// AGENTCTL_PKGMGR=<name> line. Same stdin-piped shape as
+// bootstrapUserCommand; it takes no arguments.
+func detectPkgMgrCommand() []string {
+	return []string{"sh", "-s"}
+}
+
+// installPackagesCommand runs installPackagesScript with the guest's
+// package manager and the already-resolved distro package names as
+// separate argv entries — the script forwards them as "$@", so no name
+// ever passes through shell word-splitting.
+func installPackagesCommand(manager string, pkgs []string) []string {
+	return append([]string{"sh", "-s", "--", manager}, pkgs...)
 }
 
 // userConfigKey is the single Incus custom config key (Incus's

@@ -1,0 +1,64 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: terminal
+  description: >-
+    The default profile's policy plus the command-line toolchain agentic
+    work assumes is present: version control, a compiler and make, a
+    scripting language, search and JSON tools, an editor and a shell
+    linter. Standalone — it does not inherit from default, so
+    --profile=terminal is a complete policy on its own.
+spec:
+  # Identical to default's. Deliberately repeated rather than inherited:
+  # profiles are flat documents (see internal/profile), and a policy that
+  # silently depended on another file would be much harder for an admin to
+  # audit than one they can read top to bottom.
+  network:
+    denyLAN: true
+    allow:
+      - domain: "api.anthropic.com"
+        ports: [443]
+      - domain: "pypi.org"
+        ports: [443]
+      - domain: "files.pythonhosted.org"
+        ports: [443]
+    ports: []
+  resources:
+    cpuCores: 2
+    memory: "4GiB"
+    diskSize: "20GiB"
+  mounts:
+    - hostPath: "~/agentctl/workspaces/{{.Name}}"
+      guestPath: "/workspace"
+      writable: true
+  mountPolicy:
+    createMissing: true
+  console:
+    viewer: "spice"
+
+  # Neutral tool names, resolved to real package names against whichever
+  # package manager the guest turns out to have — see
+  # `agentctl profile packages` for the mapping, and note that these are
+  # installed during create, before any --agent install runs.
+  #
+  # Language-specific linters are deliberately absent. `shellcheck` is here
+  # because shell is the one language every guest already runs; eslint,
+  # ruff, golangci-lint and friends belong to their own ecosystem's package
+  # manager (npm, pip, go install) and pinning distro versions of them
+  # would be worse than letting the project install what it needs.
+  packages:
+    - git
+    - curl
+    - ca-certificates
+    - openssh-client
+    - ripgrep
+    - jq
+    - unzip
+    - tar
+    - less
+    - vim
+    - procps
+    - make
+    - gcc
+    - python3
+    - shellcheck

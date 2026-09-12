@@ -2,7 +2,7 @@ package incus
 
 import "embed"
 
-//go:embed embedded/bootstrap-user.sh
+//go:embed embedded/*.sh
 var embeddedFS embed.FS
 
 func mustReadEmbedded(path string) string {
@@ -17,4 +17,8 @@ func mustReadEmbedded(path string) string {
 	return string(data)
 }
 
-var bootstrapUserScript = mustReadEmbedded("embedded/bootstrap-user.sh")
+var (
+	bootstrapUserScript   = mustReadEmbedded("embedded/bootstrap-user.sh")
+	detectPkgMgrScript    = mustReadEmbedded("embedded/detect-pkgmgr.sh")
+	installPackagesScript = mustReadEmbedded("embedded/install-packages.sh")
+)

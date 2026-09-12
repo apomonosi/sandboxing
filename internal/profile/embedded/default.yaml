@@ -10,7 +10,13 @@ spec:
   network:
     denyLAN: true
     allow:
-      - domain: "*.anthropic.com"
+      # Concrete host, not "*.anthropic.com". A wildcard here does not do
+      # what it looks like: the Incus backend resolves allow-rules to IP
+      # addresses by stripping the "*." and resolving the apex, so
+      # "*.anthropic.com" allow-listed the marketing site's address while
+      # api.anthropic.com — the endpoint anything actually talks to —
+      # stayed blocked. See TestBuiltins_NoWildcardDomains.
+      - domain: "api.anthropic.com"
         ports: [443]
       - domain: "pypi.org"
         ports: [443]

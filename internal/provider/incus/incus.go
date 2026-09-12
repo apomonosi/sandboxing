@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apomonosi/sandboxing/internal/packages"
 	"github.com/apomonosi/sandboxing/internal/provider"
 )
 
@@ -100,9 +101,37 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 	// hatch exists because a sandbox whose policy is wrong is otherwise
 	// undebuggable from the inside — no DNS, no egress, nothing to read a
 	// log from.
-	if !spec.Overrides.Unrestricted {
+	//
+	// deferACL moves that attachment to *after* provisioning, and only
+	// when packages were actually requested. Installing them means
+	// reaching the distribution's mirrors, which are CDN-backed and
+	// rotate their addresses; agentctl's allow rules are resolved host-
+	// side at create time and pin the addresses they saw, so a mirror
+	// that hands the guest a different edge address than the host got is
+	// simply unreachable. Rather than ask every profile to allowlist an
+	// unpinnable moving target, provisioning runs against the backend's
+	// default connectivity and the policy is attached once it finishes —
+	// before the instance is ever handed to its user, and before any
+	// agent install runs.
+	//
+	// The window is real and worth naming: during it the guest has
+	// whatever egress the host's bridge allows. Nothing runs in it except
+	// the distribution's own package manager and agentctl's two embedded
+	// scripts, and the CLI says so on stdout (see create.go) rather than
+	// widening the policy silently.
+	deferACL := len(spec.Packages) > 0
+	applyPolicy := func() error {
+		if spec.Overrides.Unrestricted {
+			return nil
+		}
 		if err := p.ApplyNetworkPolicy(ctx, spec.Name, spec.Overrides); err != nil {
-			return nil, fmt.Errorf("applying network policy: %w", err)
+			return fmt.Errorf("applying network policy: %w", err)
+		}
+		return nil
+	}
+	if !deferACL {
+		if err := applyPolicy(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -129,11 +158,98 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 		return nil, fmt.Errorf("provisioning default user: %w", err)
 	}
 
+	if len(spec.Packages) > 0 {
+		if err := p.installPackages(ctx, spec.Name, spec.Packages); err != nil {
+			return nil, fmt.Errorf("installing packages: %w", err)
+		}
+	}
+
 	if _, _, err := p.run(ctx, buildStopArgs(spec.Name, provider.StopOptions{Force: true})...); err != nil {
 		return nil, fmt.Errorf("stopping instance after provisioning default user: %w", err)
 	}
 
+	if deferACL {
+		if err := applyPolicy(); err != nil {
+			return nil, err
+		}
+	}
+
 	return p.Status(ctx, spec.Name)
+}
+
+// installPackages resolves agentctl's neutral tool names against whatever
+// package manager the guest actually has, then installs them as root.
+//
+// Resolution happens here rather than inside the guest script so the
+// mapping table stays in Go where it is testable and reviewable — the
+// cost is one extra `incus exec` round trip to ask the guest what it
+// runs, which is cheap next to the install itself.
+//
+// Output is discarded rather than streamed: Provider.Create has no writer
+// to stream to, and threading one through the interface for this alone
+// would be a large change for a progress bar. stderr is captured so a
+// failure names the actual package-manager error instead of just an exit
+// code. The CLI prints what it is about to install before calling Create,
+// so the silence is at least explained.
+func (p *Provider) installPackages(ctx context.Context, name string, tools []string) error {
+	mgr, err := p.detectPackageManager(ctx, name)
+	if err != nil {
+		return err
+	}
+	resolved, err := packages.Resolve(mgr, tools)
+	if err != nil {
+		return err
+	}
+	if len(resolved) == 0 {
+		return nil
+	}
+
+	var stderr bytes.Buffer
+	exitCode, err := p.runner.RunStream(ctx, binary,
+		buildExecArgs(name, installPackagesCommand(string(mgr), resolved), nil),
+		strings.NewReader(installPackagesScript), io.Discard, &stderr)
+	if err != nil {
+		return fmt.Errorf("running package install script: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("%s install of [%s] exited %d: %s",
+			mgr, strings.Join(resolved, " "), exitCode, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+// detectPackageManager asks the guest which package manager it has. An
+// image with none that agentctl drives is reported through
+// packages.ErrUnsupportedManager, whose message names the distributions
+// that do work — more useful than "exit status 1" from a failed install.
+func (p *Provider) detectPackageManager(ctx context.Context, name string) (packages.Manager, error) {
+	var stdout, stderr bytes.Buffer
+	exitCode, err := p.runner.RunStream(ctx, binary,
+		buildExecArgs(name, detectPkgMgrCommand(), nil),
+		strings.NewReader(detectPkgMgrScript), &stdout, &stderr)
+	if err != nil {
+		return "", fmt.Errorf("detecting the guest package manager: %w", err)
+	}
+	if exitCode != 0 {
+		return "", fmt.Errorf("detecting the guest package manager: script exited %d: %s", exitCode, strings.TrimSpace(stderr.String()))
+	}
+	mgr := packages.Manager(parseTaggedLine(stdout.String(), "AGENTCTL_PKGMGR="))
+	if mgr == "" {
+		return "", packages.ErrUnsupportedManager{}
+	}
+	return mgr, nil
+}
+
+// parseTaggedLine pulls the value out of the single "<prefix><value>" line
+// agentctl's embedded scripts use to report back, ignoring anything else
+// on stdout (a login banner, a package manager's own chatter).
+func parseTaggedLine(stdout, prefix string) string {
+	for _, line := range strings.Split(stdout, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // provisionDefaultUser runs bootstrapUserScript inside the instance (as
@@ -164,10 +280,8 @@ func (p *Provider) provisionDefaultUser(ctx context.Context, name, username stri
 }
 
 func parseBootstrapUID(stdout string) (string, error) {
-	for _, line := range strings.Split(stdout, "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "AGENTCTL_UID="); ok {
-			return v, nil
-		}
+	if uid := parseTaggedLine(stdout, "AGENTCTL_UID="); uid != "" {
+		return uid, nil
 	}
 	return "", fmt.Errorf("user bootstrap script did not report AGENTCTL_UID (output: %q)", stdout)
 }
@@ -193,7 +307,7 @@ func (p *Provider) resolveExecUser(ctx context.Context, name string, root bool) 
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("malformed %s config value %q on instance %q", userConfigKey, val, name)
 	}
-	return &execUser{uid: parts[1], home: parts[2]}, nil
+	return &execUser{name: parts[0], uid: parts[1], home: parts[2]}, nil
 }
 
 func (p *Provider) Start(ctx context.Context, name string) error {

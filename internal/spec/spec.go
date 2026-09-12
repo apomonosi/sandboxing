@@ -116,5 +116,6 @@ func ToInstanceSpec(name, image string, profileNames []string, policy profile.Po
 		Overrides: policy.Network.ToProviderNetworkPolicy(),
 		Resources: policy.Resources.ToProviderResourceLimits(),
 		Mounts:    mounts,
+		Packages:  append([]string(nil), policy.Packages...),
 	}, nil
 }

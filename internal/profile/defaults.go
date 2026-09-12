@@ -7,13 +7,23 @@ var embeddedFS embed.FS
 
 // builtinProfiles maps a profile name to its raw embedded YAML. Populated
 // once at init from embedded/*.yaml so `agentctl profile list` always has
-// at least "default" and "strict" available with no external files.
+// a usable set available with no external files.
+//
+// The four fall along two axes. default and strict differ only in how much
+// they permit (strict pre-approves no egress and confines every mount);
+// terminal and gui differ from default only in what they *install* — the
+// same policy, plus a toolchain. Nothing here inherits from anything else:
+// each file is a complete policy an admin can read top to bottom, which
+// matters more for an artifact whose job is to be audited than the
+// duplication costs.
 var builtinProfiles = mustLoadBuiltins()
 
 func mustLoadBuiltins() map[string][]byte {
 	names := map[string]string{
-		"default": "embedded/default.yaml",
-		"strict":  "embedded/strict.yaml",
+		"default":  "embedded/default.yaml",
+		"strict":   "embedded/strict.yaml",
+		"terminal": "embedded/terminal.yaml",
+		"gui":      "embedded/gui.yaml",
 	}
 	out := make(map[string][]byte, len(names))
 	for name, path := range names {

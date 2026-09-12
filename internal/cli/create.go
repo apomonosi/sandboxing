@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apomonosi/sandboxing/internal/agent"
+	"github.com/apomonosi/sandboxing/internal/packages"
 	"github.com/apomonosi/sandboxing/internal/profile"
 	"github.com/apomonosi/sandboxing/internal/provider"
 	"github.com/apomonosi/sandboxing/internal/spec"
@@ -26,6 +27,7 @@ func newCreateCmd() *cobra.Command {
 		memory    string
 		diskSize  string
 		agentName string
+		pkgs      []string
 		mounts    mountFlags
 	)
 
@@ -112,6 +114,13 @@ func newCreateCmd() *cobra.Command {
 			if diskSize != "" {
 				flagOverrides.Resources.DiskSize = diskSize
 			}
+			for _, name := range pkgs {
+				name = strings.TrimSpace(name)
+				if err := packages.ValidateName(name); err != nil {
+					return fmt.Errorf("--package: %w", err)
+				}
+				flagOverrides.Packages = append(flagOverrides.Packages, name)
+			}
 
 			overrides := profile.Merge(baseOverrides, flagOverrides)
 			policy, err := spec.ResolvePolicy(profileNames, profileDirFlag(cmd), overrides)
@@ -147,6 +156,11 @@ func newCreateCmd() *cobra.Command {
 					return err
 				}
 			}
+			if len(policy.Packages) > 0 {
+				if err := gateOrBlock(w, providerName, p.Capabilities().Get(provider.FeaturePackages), fp); err != nil {
+					return err
+				}
+			}
 
 			instSpec, err := spec.ToInstanceSpec(name, resolvedImage, profileNames, policy, previewRequested(cmd))
 			if err != nil {
@@ -164,6 +178,21 @@ func newCreateCmd() *cobra.Command {
 				return pv.PreviewCreate(instSpec)
 			}); handled {
 				return err
+			}
+
+			if len(instSpec.Packages) > 0 {
+				// Said out loud for two reasons. Create() streams nothing
+				// while a package manager works, so without this the
+				// terminal just stops for a minute or two; and the
+				// deferred ACL below is a real, if narrow, relaxation that
+				// the user should hear about from agentctl rather than
+				// discover in the source.
+				fmt.Fprintf(w, "agentctl: installing %d package(s) into the guest: %s\n",
+					len(instSpec.Packages), strings.Join(instSpec.Packages, " "))
+				if !unrestricted {
+					fmt.Fprintln(w, "agentctl: the network policy is attached after provisioning, so package mirrors"+
+						"\n           (CDN-backed, and not pinnable to fixed addresses) stay reachable while installing.")
+				}
 			}
 
 			inst, err := p.Create(cmd.Context(), instSpec)
@@ -204,6 +233,8 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&ports, "port", nil, "publish a port \"host:guest[/proto]\" (repeatable)")
 	cmd.Flags().IntVar(&cpuCores, "cpu-cores", 0, "override CPU core limit")
 	cmd.Flags().StringVar(&agentName, "agent", "", "just-in-time install a coding agent after create (valid: "+strings.Join(agent.Names(), ", ")+")")
+	cmd.Flags().StringSliceVar(&pkgs, "package", nil,
+		"install a tool into the guest during create (repeatable; see `agentctl profile packages` for portable names)")
 	cmd.Flags().StringVar(&memory, "memory", "", "override memory limit, e.g. 4GiB")
 	cmd.Flags().StringVar(&diskSize, "disk-size", "", "override root disk size, e.g. 20GiB")
 	mounts.register(cmd)
