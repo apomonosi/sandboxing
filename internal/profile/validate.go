@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"github.com/apomonosi/sandboxing/internal/packages"
 )
 
 // Validate checks a Profile for structural and semantic errors. It
@@ -27,8 +29,23 @@ func Validate(p *Profile) error {
 	errs = append(errs, validateResources(p.Spec.Resources)...)
 	errs = append(errs, validateMounts(p.Spec.Mounts)...)
 	errs = append(errs, validateMountPolicy(p.Spec.MountPolicy)...)
+	errs = append(errs, validatePackages(p.Spec.Packages)...)
 
 	return errors.Join(errs...)
+}
+
+// validatePackages rejects names that aren't shaped like package names.
+// Checked at load time, not at install time, because the alternative is a
+// create that provisions the VM, starts it, and only then fails on a
+// typo'd YAML entry.
+func validatePackages(pkgs []string) []error {
+	var errs []error
+	for i, name := range pkgs {
+		if err := packages.ValidateName(strings.TrimSpace(name)); err != nil {
+			errs = append(errs, fmt.Errorf("packages[%d]: %w", i, err))
+		}
+	}
+	return errs
 }
 
 func validateNetwork(n NetworkPolicy) []error {

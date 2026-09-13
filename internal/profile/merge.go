@@ -12,6 +12,7 @@ package profile
 //   - Network.Allow, Network.Ports, Mounts: additive union (override
 //     entries are appended after base's, duplicates are the caller's
 //     problem to avoid via Validate)
+//   - Packages: additive union, deduped
 //   - Network.DenyLAN: override's value is taken as-is (the CLI layer is
 //     responsible for resolving --deny-lan/--allow-lan against the
 //     profile's value before constructing override)
@@ -46,6 +47,14 @@ func Merge(base, override Policy) Policy {
 	if override.Resources.DiskSize != "" {
 		out.Resources.DiskSize = override.Resources.DiskSize
 	}
+
+	// Additive and deduped, like DenyPaths: two layers both asking for
+	// `git` should install it once, and no layer can withdraw a tool an
+	// earlier one asked for. (Nothing here is load-bearing for security —
+	// packages add software, they don't restrict anything — so plain
+	// accumulation is the right semantic rather than mountPolicy's
+	// narrow-only asymmetry.)
+	out.Packages = dedupe(append(append([]string(nil), base.Packages...), override.Packages...))
 
 	out.Mounts = append(append([]Mount(nil), base.Mounts...), override.Mounts...)
 	out.MountPolicy = mergeMountPolicy(base.MountPolicy, override.MountPolicy)

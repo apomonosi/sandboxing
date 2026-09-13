@@ -109,6 +109,11 @@ type InstanceSpec struct {
 	// default (e.g. "agent") rather than root — providers that can't
 	// provision a non-root user at all are unaffected by this field.
 	DefaultUser string
+	// Packages are neutral tool names (see internal/packages) to install
+	// into the guest during Create. Providers that can't provision
+	// software report FeaturePackages as unsupported and ignore this;
+	// the CLI gates on that capability before ever reaching them.
+	Packages []string
 }
 
 // NetworkPolicy is the provider-facing view of profile.Policy's network

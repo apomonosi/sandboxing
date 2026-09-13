@@ -47,6 +47,7 @@ Creates an instance without starting it.
 | `--mount-writable` | Make every mount writable |
 | `--cpu-cores`, `--memory`, `--disk-size` | Resource overrides |
 | `--agent <name>` | Just-in-time install a coding agent (`claude`, `codex`, `cursor`, `gemini`, `opencode`, `pi`) — implies `start`; see [Agent Provisioning](agent-provisioning.md) |
+| `--package <name>` | Install a tool into the guest during create, before any `--agent` install (repeatable). Portable names — run `agentctl profile packages` for the table. Requesting packages defers the network ACL until after they're installed; see [Packages](../reference/profile-schema.md#packages) |
 
 Supports `--preview`/`--dry-run` (see [Preview Mode](preview-mode.md)); with
 `--agent` set, preview only shows the `create` command itself — the implied
@@ -109,13 +110,32 @@ for why this never does raw X11 forwarding. Supports `--preview`/`--dry-run`.
 Pull a pre-baked image, or build one just-in-time from a base image plus a
 cloud-init package list. `pull` supports `--preview`/`--dry-run`.
 
+`image build --package` and `create --package` are different mechanisms
+with the same spelling, and which one you want depends on how often you'll
+use the result. `image build` bakes packages into a reusable image via
+cloud-init — pay the install cost once, then every `create` from that image
+starts with the tools already there. `create --package` installs into one
+sandbox at create time, against whatever base image you named. `image
+build` takes literal distro package names; `create --package` takes the
+portable names below.
+
 ## Profiles
 
 ### `agentctl profile list` / `agentctl profile show <name>` / `agentctl profile set <name>`
 
-List available profiles (built-in `default`/`strict` plus any file-based
-ones), print one's resolved contents, or set the default profile applied
-when `create` is given no `--profile`/`--spec`.
+List available profiles (built-in `default`, `strict`, `terminal` and `gui`
+plus any file-based ones), print one's resolved contents, or set the default
+profile applied when `create` is given no `--profile`/`--spec`.
+
+### `agentctl profile packages`
+
+Prints the tool names usable in a profile's `packages:` list (and with
+`create --package`), alongside the real package each one installs under
+apt, dnf and apk. Supports `--json`.
+
+A name not in this table is passed to the guest's package manager verbatim
+— useful when you know your guest, but it ties the profile to one
+distribution.
 
 ## Configuration
 

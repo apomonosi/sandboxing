@@ -35,6 +35,10 @@ func buildCapabilities() provider.Table {
 	supported(provider.FeatureMount)
 	supported(provider.FeatureImagePull)
 	supported(provider.FeatureImageBuild)
+	// Create already starts the instance briefly to provision the non-root
+	// user, so installing packages costs no extra boot — it is two more
+	// `incus exec` calls inside a window that already exists.
+	supported(provider.FeaturePackages)
 
 	// fs.mount.readonly is marked Supported on the strength of the disk
 	// device's documented `readonly` option, which carries no

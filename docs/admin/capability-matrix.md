@@ -20,6 +20,7 @@ for which cells are genuine platform gaps.
 | fs.mount.readonly | Supported | Supported | **Manual workaround** |
 | image.pull | Supported | **Not available** | Under development |
 | image.build | Supported | Under development | Under development |
+| provision.packages (`packages:` / `--package`) | Supported | Under development | Under development |
 | logs.network / logs.exec | Under development | **Not available** (network only) / Under development | Under development |
 
 ## Reading the "genuine platform gap" cells
@@ -41,6 +42,15 @@ agentctl's own wiring:
   store to wire up to, unlike Incus's `incus image copy`.
 - **Lima: logs.network → Not available.** There's no egress log source to
   read from without the network.acl workaround's `pf` anchor in place first.
+- **Lima: provision.packages → Under development** *(agentctl's wiring, not a
+  platform gap — listed here because the reason is unusual).* Lima supports
+  this natively through a template's `provision:` scripts, but that is a
+  *different mechanism* from the one Incus uses, not the same one left
+  unwired. Incus installs through `incus exec` against an instance its
+  `create` already starts and stops to provision the non-root user; Lima's
+  `create` deliberately never starts anything, so there is no equivalent
+  window to reuse. Until it's built, install by hand:
+  `limactl shell <name> -- sudo apt-get install -y <pkg>`.
 - **Hyper-V: network.port-publish → Manual workaround.** Hyper-V has no
   built-in "publish a port" primitive; agentctl prints a NAT-switch +
   `netsh interface portproxy` procedure.

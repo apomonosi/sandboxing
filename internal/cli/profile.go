@@ -6,11 +6,13 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	"github.com/apomonosi/sandboxing/internal/config"
+	"github.com/apomonosi/sandboxing/internal/packages"
 	"github.com/apomonosi/sandboxing/internal/profile"
 )
 
@@ -19,8 +21,49 @@ func newProfileCmd() *cobra.Command {
 		Use:   "profile",
 		Short: "Manage named security profiles (network/resource/mount policy bundles)",
 	}
-	cmd.AddCommand(newProfileListCmd(), newProfileShowCmd(), newProfileSetCmd())
+	cmd.AddCommand(newProfileListCmd(), newProfileShowCmd(), newProfileSetCmd(), newProfilePackagesCmd())
 	return cmd
+}
+
+// newProfilePackagesCmd lists the neutral tool names a profile's
+// `packages:` list (and --package) can use portably. Worth a command
+// rather than only a docs page: the point of the catalog is that one name
+// works on Ubuntu, Fedora and Alpine alike, and the per-manager columns
+// are what make that claim checkable.
+func newProfilePackagesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "packages",
+		Short: "List tool names usable in a profile's packages: list, and what they install per distro",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			w := cmd.OutOrStdout()
+			if jsonOutput(cmd) {
+				enc := json.NewEncoder(w)
+				enc.SetIndent("", "  ")
+				return enc.Encode(packages.Catalog)
+			}
+			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "TOOL\tAPT\tDNF\tAPK")
+			for _, name := range packages.Known() {
+				row := packages.Catalog[name]
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name,
+					orDash(row[packages.APT]), orDash(row[packages.DNF]), orDash(row[packages.APK]))
+			}
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			fmt.Fprintln(w, "\nA name not listed here is passed to the guest's package manager verbatim,")
+			fmt.Fprintln(w, "which works but ties the profile to one distribution.")
+			return nil
+		},
+	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func newProfileListCmd() *cobra.Command {

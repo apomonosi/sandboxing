@@ -1,0 +1,63 @@
+apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: gui
+  description: >-
+    Everything in the terminal profile plus a minimal X stack (X server,
+    xinit, the Openbox window manager, xterm), for agents that are GUI
+    applications rather than CLIs. View the display with `agentctl view`.
+    Standalone — it does not inherit from terminal.
+spec:
+  network:
+    denyLAN: true
+    allow:
+      - domain: "api.anthropic.com"
+        ports: [443]
+      - domain: "pypi.org"
+        ports: [443]
+      - domain: "files.pythonhosted.org"
+        ports: [443]
+    ports: []
+  resources:
+    cpuCores: 2
+    memory: "4GiB"
+    # Larger than terminal's 20GiB: an X server, a window manager and their
+    # font/library dependency closure are the single biggest thing agentctl
+    # installs into a guest.
+    diskSize: "30GiB"
+  mounts:
+    - hostPath: "~/agentctl/workspaces/{{.Name}}"
+      guestPath: "/workspace"
+      writable: true
+  mountPolicy:
+    createMissing: true
+  console:
+    viewer: "spice"
+
+  # The terminal profile's list, plus the X stack.
+  #
+  # What this gives you is a display that can be driven, not a desktop that
+  # comes up on its own: there is no display manager and no autologin, so
+  # nothing starts X for you. Open the console with `agentctl view`, log
+  # in, and run `startx`. A display manager is a much larger surface to add
+  # to a sandbox, and adding one was not worth doing implicitly.
+  packages:
+    - git
+    - curl
+    - ca-certificates
+    - openssh-client
+    - ripgrep
+    - jq
+    - unzip
+    - tar
+    - less
+    - vim
+    - procps
+    - make
+    - gcc
+    - python3
+    - shellcheck
+    - xorg
+    - xinit
+    - openbox
+    - xterm

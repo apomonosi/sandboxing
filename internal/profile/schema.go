@@ -38,6 +38,16 @@ type Policy struct {
 	Mounts      []Mount       `yaml:"mounts"`
 	MountPolicy MountPolicy   `yaml:"mountPolicy"`
 	Console     Console       `yaml:"console"`
+	// Packages are neutral tool names (internal/packages) installed into
+	// the guest during create, before any agent install runs. Additive on
+	// merge, like Network.Allow: a profile chain can only ever add tools,
+	// never remove one an earlier layer asked for.
+	//
+	// Unlike every other field here, this one *adds software* to the
+	// sandbox rather than restricting what the sandbox may do — so it is
+	// worth being clear that it is not a security control and cannot be
+	// used as one. See docs/user/profiles-and-policies.md.
+	Packages []string `yaml:"packages"`
 }
 
 type NetworkPolicy struct {

@@ -206,6 +206,50 @@ An already-successful install is never repeated: `create --agent=<name>`
 records success once the install script exits `0`, and every subsequent
 `start` is a no-op with respect to the agent.
 
+## An agent installed successfully but `claude`/`codex`/... is "command not found"
+
+Almost always a `PATH` problem rather than a failed install, and the fix is
+already in agentctl — this section is here because instances created by an
+older build still carry the symptom.
+
+Agent installers put their binary in `~/.local/bin`, and every distribution
+puts that directory on `PATH` from a *login* shell profile
+(`/etc/profile.d/` on Fedora, the skel `~/.profile` on Debian). `incus exec`
+runs neither a login nor an interactive shell, so none of those were ever
+sourced: the install genuinely succeeded and the binary genuinely wasn't
+findable.
+
+agentctl now sets `PATH` (and `HOME`/`USER`/`LOGNAME`) explicitly on every
+`exec`, and `agentctl shell` opens a real login shell. Check what you're
+getting:
+
+```console
+$ agentctl exec demo -- sh -c 'echo $PATH'
+/home/claude/.local/bin:/home/claude/bin:/usr/local/sbin:...
+```
+
+If `~/.local/bin` isn't first, the instance predates the fix. Either
+recreate it, or call the binary by its full path
+(`agentctl exec demo -- ~/.local/bin/claude`).
+
+The same non-login behavior is why a sandbox's shell could come up with no
+prompt, no colors and no locale: `~/.bashrc` was sourced but `/etc/profile`
+was not.
+
+## `agentctl shell` has no dotfiles / an empty home directory
+
+`useradd -m` copies `/etc/skel` into a new home directory, and busybox
+`adduser` usually does too — "usually" being the problem, since it depends
+on how busybox was compiled. agentctl's bootstrap script now copies any
+missing `/etc/skel` entry explicitly, and never overwrites one that already
+exists.
+
+That runs on every provisioning pass, including the idempotent one for an
+account that already exists, so an instance created by an older build is
+repaired the next time its user is provisioned rather than staying broken.
+`agentctl start <name>` on an instance with a pending agent install is the
+usual trigger; otherwise recreate it.
+
 ## An `--allow` entry stopped working after a while
 
 Domain-based allow rules are resolved to IP addresses when the policy is
