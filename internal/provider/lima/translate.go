@@ -136,7 +136,9 @@ func buildSetExpressions(spec provider.InstanceSpec) []string {
 // user's entire home directory while its own docs promised a sandbox.
 // Resetting first makes this equivalent to `limactl --mount-only`, which
 // is the right default here: the mount set is agentctl's policy, not the
-// template author's.
+// template author's. (It can't reach the mounts Lima merges in from
+// $LIMA_HOME/_config/default.yaml and override.yaml each time it loads
+// the instance; Start refuses those instead — see checkMounts.)
 //
 // `.mounts = []` rather than Lima's own `--mount-none` spelling of
 // `.mounts = null`, because a subsequent `+=` against null is not

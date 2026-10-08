@@ -106,6 +106,12 @@ named at `create` or `start` time. The defaults that make that hold:
 - **Admins can bound it further.** `mountPolicy.allowedRoots` in an
   org-distributed profile constrains what anyone may name, and no CLI flag
   widens it; layering profiles can only tighten it.
+- **Lima's own configuration can't add to it.** Lima merges the mounts in
+  `~/.lima/_config/default.yaml` and `override.yaml` into every instance,
+  bypassing every check above, since agentctl never sees them. `agentctl
+  start` compares what Lima will actually mount with the instance's own
+  configuration, and refuses to boot a sandbox that would see anything more —
+  see [Lima setup](providers/lima-setup.md#mounts).
 
 Two honest limits. First, read-only enforcement is per-provider — see the
 [capability matrix](capability-matrix.md); on Incus it is asserted from the

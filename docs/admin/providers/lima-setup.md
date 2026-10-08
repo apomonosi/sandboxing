@@ -53,6 +53,33 @@ script or uid/home lookup — Lima's own cloud-init `user:` handling
 provisions the non-root account at first boot, and `limactl shell` already
 resolves to it.
 
+### Mounts
+
+agentctl sets an instance's mounts itself — at `create`, and on `start
+--mount`/`--mount-only`/`--mount-none` — by resetting `.mounts` before adding
+the directories you named (see
+[Host filesystem access](../../user/profiles-and-policies.md#host-filesystem-access)).
+The reset matters: nearly every stock Lima template inherits
+`template:_default/mounts`, which shares your entire home directory with the
+guest, read-only.
+
+Lima also merges the mounts in `~/.lima/_config/default.yaml` and
+`override.yaml` (under `$LIMA_HOME`, if set) into every instance each time it
+starts one, and an instance can't opt out. Those never pass through agentctl's
+mount checks, so `agentctl start` first reads what Lima will actually mount
+(`limactl list <name> --json` — on macOS, as part of the effective-configuration
+check under [Network policy enforcement](#network-policy-enforcement)) and
+refuses to start the instance if that goes beyond the instance's own
+configuration: an extra directory, a different host directory at one of its
+mount points, or a read-only mount made writable. Sharing less is fine. If
+`start` refuses, see
+[Troubleshooting](../../user/troubleshooting.md#lima-start-fails-with-beyond-what-the-instances-own-configuration-mounts).
+
+An instance created before agentctl reset the template's mounts still declares
+the home-directory mount in its own configuration, so this check doesn't catch
+it; `agentctl start <name> --mount-none` (or `--mount ...`) replaces it. The
+check only runs on `agentctl start`; a plain `limactl start` skips it.
+
 ## Network policy enforcement
 
 On Incus, network policy is a per-instance network ACL enforced by the host
@@ -174,7 +201,8 @@ and the in-guest check.
   guest that could write there could rewrite its own allowlist. agentctl
   replaces a template's own mounts with the ones you asked for, and
   refuses to start an instance whose effective mounts (including any
-  `~/.lima/_config` adds) would make that directory writable.
+  `~/.lima/_config` adds) would make that directory writable — though any
+  mount `~/.lima/_config` adds is refused anyway (see [Mounts](#mounts)).
 
 ## Known gaps versus Incus
 

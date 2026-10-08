@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ type fakeRunner struct {
 	calls           [][]string
 	readyFailCount  int
 	readyFailAlways bool
-	listJSON        string // canned `list`/`list <name>` response; defaults to one running "demo" instance
+	listJSON        string // canned `list`/`list <name>` response; defaults to one running "demo" instance with no mounts
 }
 
 func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
@@ -37,7 +39,7 @@ func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]by
 		if f.listJSON != "" {
 			return []byte(f.listJSON), nil, nil
 		}
-		return []byte(`[{"name":"demo","status":"Running"}]`), nil, nil
+		return []byte(`[{"name":"demo","status":"Running","config":{"mounts":[]}}]`), nil, nil
 	}
 	return []byte("[]"), nil, nil
 }
@@ -173,6 +175,71 @@ func contains(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// limaInstanceWithMounts writes a lima.yaml declaring ownMounts (YAML list
+// items) into a fresh instance directory, and returns a fakeRunner whose
+// `limactl list` reports that directory with effectiveMounts (JSON array
+// items) as Lima's merged configuration.
+func limaInstanceWithMounts(t *testing.T, ownMounts, effectiveMounts string) *fakeRunner {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lima.yaml"), []byte("cpus: 2\nmounts:\n"+ownMounts), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return &fakeRunner{listJSON: `[{"name":"demo","status":"Stopped","dir":` + strconv.Quote(dir) +
+		`,"config":{"mounts":[` + effectiveMounts + `]}}]`}
+}
+
+func assertNotStarted(t *testing.T, fr *fakeRunner) {
+	t.Helper()
+	for _, c := range fr.calls {
+		if reflect.DeepEqual(c[1:], buildStartArgs("demo")) {
+			t.Errorf("limactl start was run anyway: %v", c)
+		}
+	}
+}
+
+func TestStart_AllowsTheInstancesOwnMounts(t *testing.T) {
+	fr := limaInstanceWithMounts(t,
+		"- location: /src/alpha\n  mountPoint: /workspace\n  writable: true\n",
+		`{"location":"/src/alpha","mountPoint":"/workspace","writable":true}`)
+	p, _ := newTestProvider(t, fr, false)
+
+	if err := p.Start(context.Background(), "demo"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	assertLastCall(t, fr, append([]string{binary}, buildStartArgs("demo")...))
+}
+
+// TestStart_RefusesMountsLimaMergesIn is the regression test for a
+// sandbox seeing host directories nobody named to agentctl: here, the
+// home directory a ~/.lima/_config/default.yaml adds to every instance.
+func TestStart_RefusesMountsLimaMergesIn(t *testing.T) {
+	fr := limaInstanceWithMounts(t,
+		"- location: /src/alpha\n  mountPoint: /workspace\n  writable: true\n",
+		`{"location":"/src/alpha","mountPoint":"/workspace","writable":true},`+
+			`{"location":"/Users/you","mountPoint":"/Users/you","writable":false}`)
+	p, _ := newTestProvider(t, fr, false)
+
+	err := p.Start(context.Background(), "demo")
+	if err == nil || !strings.Contains(err.Error(), "would mount /Users/you at /Users/you (read-only)") {
+		t.Fatalf("Start() = %v, want it refused for mounting the home directory", err)
+	}
+	assertNotStarted(t, fr)
+}
+
+func TestStart_NotFound(t *testing.T) {
+	fr := &fakeRunner{listJSON: `[{"name":"other","status":"Stopped","config":{"mounts":[]}}]`}
+	p, _ := newTestProvider(t, fr, false)
+
+	if err := p.Start(context.Background(), "demo"); !errors.Is(err, provider.ErrNotFound) {
+		t.Errorf("Start() = %v, want ErrNotFound", err)
+	}
+	assertNotStarted(t, fr)
 }
 
 // shrinkReadyWait overrides the package-level readiness timing so tests
