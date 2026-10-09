@@ -105,10 +105,15 @@ func buildSetExpressions(spec provider.InstanceSpec) []string {
 		username = defaultUsername
 	}
 	exprs = append(exprs, fmt.Sprintf(".user.name = %q", username))
-	// Forced unconditionally (not just when the template omits its own
-	// default) so --root never hangs on an unexpected sudo password
-	// prompt regardless of which template spec.Image points at.
-	exprs = append(exprs, ".user.sudo = true")
+	// Passwordless sudo, so --root never hangs on an unexpected sudo
+	// password prompt. Lima defaults user.passwordlessSudo to true, but a
+	// template or $LIMA_HOME/_config/default.yaml can turn it off, so it's
+	// pinned here — except on macOS guests, where Lima rejects it (and
+	// defaults it off). `limactl create` embeds a template's bases before
+	// applying --set, so .os is the guest's even when a base sets it.
+	// Lima added the field in v2.2; earlier versions always grant
+	// passwordless sudo, and only warn about a field they don't know.
+	exprs = append(exprs, `with(select(.os != "Darwin"); .user.passwordlessSudo = true)`)
 
 	// Forced off unconditionally too, so the host's SSH agent and X11
 	// display stay out of the sandbox whatever the template says — and

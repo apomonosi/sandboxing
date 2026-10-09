@@ -26,7 +26,7 @@ func TestBuildCreateArgs_Full(t *testing.T) {
 		"--set", `.memory = "4GiB"`,
 		"--set", `.disk = "20GiB"`,
 		"--set", `.user.name = "claude"`,
-		"--set", `.user.sudo = true`,
+		"--set", `with(select(.os != "Darwin"); .user.passwordlessSudo = true)`,
 		"--set", `.ssh.forwardAgent = false`,
 		"--set", `.ssh.forwardX11 = false`,
 		"--set", `.mounts = []`,
@@ -44,16 +44,19 @@ func TestBuildCreateArgs_Full(t *testing.T) {
 // Incus too, but a bare spec (no --agent) must still get a fixed,
 // predictable username on Lima rather than whatever the template's own
 // cloud-init default happens to be (which would vary per developer
-// machine). .user.sudo=true must also always be present, so --root never
-// hangs on an unexpected password prompt regardless of the template.
+// machine). Passwordless sudo must also always be pinned, so --root never
+// hangs on an unexpected password prompt regardless of the template — by
+// user.passwordlessSudo, the field Lima actually has; it ignored the
+// .user.sudo agentctl used to set, warning "unknown field".
 func TestBuildCreateArgs_DefaultUsername_FallsBackToAgent(t *testing.T) {
 	got := buildCreateArgs(provider.InstanceSpec{Name: "demo", Image: "template://ubuntu-lts"})
+	const sudo = `with(select(.os != "Darwin"); .user.passwordlessSudo = true)`
 	var sawUsername, sawSudo bool
 	for _, a := range got {
 		if a == `.user.name = "agent"` {
 			sawUsername = true
 		}
-		if a == ".user.sudo = true" {
+		if a == sudo {
 			sawSudo = true
 		}
 	}
@@ -61,7 +64,7 @@ func TestBuildCreateArgs_DefaultUsername_FallsBackToAgent(t *testing.T) {
 		t.Errorf("buildCreateArgs() = %v, want it to include .user.name = \"agent\"", got)
 	}
 	if !sawSudo {
-		t.Errorf("buildCreateArgs() = %v, want it to include .user.sudo = true", got)
+		t.Errorf("buildCreateArgs() = %v, want it to include %s", got, sudo)
 	}
 }
 

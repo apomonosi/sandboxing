@@ -42,8 +42,11 @@ agentctl always forces these fields, whatever the template says:
 - `.user.name` — the sandbox's non-root default user (`agent` unless
   `--agent=<name>` or an explicit override sets it otherwise), for
   consistency with the Incus backend's own non-root-by-default behavior.
-- `.user.sudo = true` — passwordless sudo, so `agentctl exec/shell --root`
-  never hangs on an unexpected password prompt.
+- `.user.passwordlessSudo = true` — passwordless sudo, so `agentctl
+  exec/shell --root` never hangs on an unexpected password prompt. Lima
+  defaults to this already, but a template or `~/.lima/_config/default.yaml`
+  can turn it off. macOS guests are left alone: Lima doesn't support
+  passwordless sudo there, so `--root` needs the guest user's password.
 - `.ssh.forwardAgent = false` and `.ssh.forwardX11 = false` — so Lima doesn't
   forward your SSH agent or X11 display into the sandbox (see
   [SSH agent and X11 forwarding](#ssh-agent-and-x11-forwarding)).
