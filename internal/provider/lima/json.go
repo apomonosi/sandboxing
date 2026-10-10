@@ -17,15 +17,21 @@ import (
 // — same posture as internal/provider/incus/json.go's instanceJSON.
 //
 // NOTE: the network-confinement fields (vmType through config) were
-// checked against the JSON tags of Lima v2.2's limatype.Instance source,
-// though not yet against a live `limactl list --json`. That same source
-// shows the output has no guest IP address field at all (so Instance.IPs
-// stays unpopulated on this backend), and no creation time either:
-// CreatedAt below always comes back empty and degrades to a zero time.
+// checked against the JSON tags of Lima v2.2's limatype.Instance source;
+// name, status, dir, vmType, sshLocalPort, and config's propagateProxyEnv,
+// env and mounts also against `limactl list --json` from a Lima v2.2.1
+// build (on Linux, not macOS, and only for a stopped instance with no
+// additional networks). That same source shows the output has no guest IP
+// address field at all (so Instance.IPs stays unpopulated on this
+// backend), and no creation time either: CreatedAt below always comes back
+// empty and degrades to a zero time.
 type limaInstanceJSON struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"createdAt"`
+	// Dir is the instance's directory, $LIMA_HOME/<name>, which holds its
+	// own lima.yaml.
+	Dir string `json:"dir"`
 
 	// VMType, Networks (Lima's additional NICs, after merging
 	// ~/.lima/_config/default.yaml and override.yaml), and SSHLocalPort
@@ -37,24 +43,31 @@ type limaInstanceJSON struct {
 	// AutoStartedIdentifier is non-empty when launchd started it.
 	HostAgentPID          int    `json:"hostAgentPID"`
 	AutoStartedIdentifier string `json:"autoStartedIdentifier"`
-	// Config is the instance's effective (merged) lima.yaml.
+	// Config is the instance's effective configuration: its own lima.yaml
+	// merged with $LIMA_HOME/_config/default.yaml and override.yaml, the
+	// way Lima loads it for every start. Nil if Lima couldn't load it.
 	Config *limaConfigJSON `json:"config"`
 }
 
 // limaConfigJSON is the part of an instance's effective lima.yaml that
-// network confinement depends on.
+// Start checks: what network confinement depends on (checkConfinable), and
+// what the guest gets mounted (checkMounts).
 type limaConfigJSON struct {
 	PropagateProxyEnv *bool             `json:"propagateProxyEnv"`
 	Env               map[string]string `json:"env"`
 	Mounts            []limaMountJSON   `json:"mounts"`
 }
 
-// limaMountJSON is one host directory shared into the guest. In the
-// effective config, Location is absolute (Lima expands "~") and Writable
-// is filled in (default false).
+// limaMountJSON is one host directory shared into the guest, as Lima
+// reports it in `limactl list --json` — and, through the yaml tags, as it
+// writes it in an instance's own lima.yaml. In the effective configuration,
+// Lima has already expanded Location ("~", templates) and filled in
+// MountPoint (default: Location) and Writable (default: false); in a
+// lima.yaml any of that can still be left to Lima.
 type limaMountJSON struct {
-	Location string `json:"location"`
-	Writable *bool  `json:"writable"`
+	Location   string  `json:"location" yaml:"location"`
+	MountPoint *string `json:"mountPoint" yaml:"mountPoint"`
+	Writable   *bool   `json:"writable" yaml:"writable"`
 }
 
 func toInstance(j limaInstanceJSON) provider.Instance {

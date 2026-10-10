@@ -334,7 +334,8 @@ func buildNetworkEditArgs(name string, sshPort, proxyPort int) []string {
 
 // checkConfinable verifies Lima's effective configuration for an instance
 // (after its lima.yaml has been merged with ~/.lima/_config/default.yaml
-// and override.yaml) matches what confinement relies on.
+// and override.yaml) matches what confinement relies on, and mounts
+// nothing the instance's own configuration doesn't (checkMounts).
 func checkConfinable(j limaInstanceJSON, plan *startPlan) error {
 	name := j.Name
 	if !strings.EqualFold(j.VMType, "vz") {
@@ -357,10 +358,15 @@ func checkConfinable(j limaInstanceJSON, plan *startPlan) error {
 			return fmt.Errorf("Lima instance %q has env %s=%q, not %q — probably overridden by ~/.lima/_config/override.yaml; the guest would not use its egress proxy", name, kv[0], got, kv[1])
 		}
 	}
+	// Nothing beyond the instance's own mounts: one that default.yaml or
+	// override.yaml adds passed none of agentctl's mount checks.
+	if err := checkMounts(j); err != nil {
+		return err
+	}
 	// The egress policy lives in agentctl's config directory, and the
 	// proxy picks up changes to it. A guest that could write there could
-	// rewrite its own allowlist — so no writable mount may overlap it.
-	// (Lima's templates share the home directory read-only by default.)
+	// rewrite its own allowlist — so no writable mount may overlap it,
+	// even one the instance's own configuration declares.
 	for _, m := range j.Config.Mounts {
 		if m.Writable != nil && *m.Writable && pathsOverlap(m.Location, plan.Paths.ConfigDir) {
 			return fmt.Errorf("Lima instance %q mounts %s writable, which overlaps agentctl's state directory %s — the guest could rewrite its own egress policy. Make that mount read-only (or narrower) and retry", name, m.Location, plan.Paths.ConfigDir)

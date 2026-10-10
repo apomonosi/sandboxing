@@ -39,7 +39,10 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 // omits its trailing status query — and the stop signal sent to a
 // leftover proxy, which isn't a command. The ports in it are the ones a
 // start would pin right now (pickPorts is deterministic for a given
-// machine state); nothing is recorded.
+// machine state); nothing is recorded. Elsewhere, and for an instance
+// created with --no-network-policy, it's the one `limactl start`, again
+// without the read-only `limactl list` query Start checks the instance's
+// mounts with first (see checkMounts).
 //
 // If the plan can't be computed (no home directory to keep instance state
 // in, or no free loopback ports), it returns nothing rather than a

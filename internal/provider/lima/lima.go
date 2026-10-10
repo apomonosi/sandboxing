@@ -117,12 +117,21 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 // Start boots the instance. On macOS that means booting it confined, with
 // its egress limited to what its network policy allows (startConfined in
 // network.go) — unless it was created with --no-network-policy. Otherwise
-// it's a plain `limactl start`.
+// it's a plain `limactl start`. Either way it won't boot an instance that
+// Lima would mount host directories into beyond its own configuration's
+// (see checkMounts, which checkConfinable runs on the confined path).
 func (p *Provider) Start(ctx context.Context, name string) error {
 	if p.confine && !instanceUnrestricted(name) {
 		return p.startConfined(ctx, name)
 	}
-	_, _, err := p.run(ctx, buildStartArgs(name)...)
+	j, err := p.inspect(ctx, name)
+	if err != nil {
+		return err
+	}
+	if err := checkMounts(j); err != nil {
+		return err
+	}
+	_, _, err = p.run(ctx, buildStartArgs(name)...)
 	return err
 }
 
@@ -186,8 +195,8 @@ func (p *Provider) Status(ctx context.Context, name string) (*provider.Instance,
 }
 
 // inspect returns name's entry from `limactl list <name> --json`, matched
-// by name rather than taken on faith from the first line, since
-// network.go makes security decisions from it.
+// by name rather than taken on faith from the first line, since Start
+// makes security decisions from it (checkConfinable, checkMounts).
 func (p *Provider) inspect(ctx context.Context, name string) (limaInstanceJSON, error) {
 	stdout, _, err := p.run(ctx, buildListOneArgs(name)...)
 	if err != nil {

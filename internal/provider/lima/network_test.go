@@ -32,6 +32,9 @@ func newTestProvider(t *testing.T, r provider.Runner, confine bool) (*Provider, 
 	fp := &fakeProxy{}
 	if fl, ok := r.(*fakeLima); ok {
 		fp.log = &fl.calls // interleave proxy events with limactl calls
+		if fl.dir == "" {
+			fl.dir = filepath.Join(t.TempDir(), fl.name)
+		}
 	}
 	p.proxy = fp
 	p.agentctlPath = func() (string, error) { return testAgentctl, nil }
@@ -90,6 +93,7 @@ type fakeLima struct {
 	calls [][]string
 
 	name         string
+	dir          string // the instance directory; newTestProvider sets it
 	running      bool
 	hostAgentPID int
 	edits        map[string]string // yq path -> value, from `limactl edit --set`
@@ -99,8 +103,9 @@ type fakeLima struct {
 	sshPortOverride   int
 	propagateOverride *bool
 	envOverride       map[string]string
-	mounts            []limaMountJSON
-	probeOutput       string // default: blocked
+	mounts            []limaMountJSON // the instance's own, in dir/lima.yaml
+	configMounts      []limaMountJSON // what default.yaml/override.yaml add
+	probeOutput       string          // default: blocked
 	failSandboxStart  bool
 }
 
@@ -185,10 +190,18 @@ func (f *fakeLima) listJSON() []byte {
 	if f.running {
 		status = "Running"
 	}
+	// The instance's own lima.yaml declares f.mounts (JSON is valid YAML);
+	// Lima's effective configuration adds f.configMounts on top.
+	if f.dir != "" {
+		own, _ := json.Marshal(map[string]any{"mounts": f.mounts})
+		_ = os.MkdirAll(f.dir, 0o755)
+		_ = os.WriteFile(filepath.Join(f.dir, "lima.yaml"), own, 0o644)
+	}
+	mounts := append(append([]limaMountJSON{}, f.mounts...), f.configMounts...)
 	line, _ := json.Marshal(map[string]any{
-		"name": f.name, "status": status, "vmType": vmType, "network": networks,
+		"name": f.name, "status": status, "dir": f.dir, "vmType": vmType, "network": networks,
 		"sshLocalPort": sshPort, "hostAgentPID": f.hostAgentPID,
-		"config": map[string]any{"propagateProxyEnv": propagate, "env": env, "mounts": f.mounts},
+		"config": map[string]any{"propagateProxyEnv": propagate, "env": env, "mounts": mounts},
 	})
 	return append(line, '\n')
 }
@@ -430,6 +443,45 @@ func TestConfinedStart_RefusesWritableMountOverAgentctlState(t *testing.T) {
 			}
 			if len(fl.callsTo(sandboxExecBinary)) != 0 || len(fp.starts) != 0 {
 				t.Errorf("started despite the writable mount: %v", fl.verbs())
+			}
+		})
+	}
+}
+
+// TestConfinedStart_RefusesMountsLimaMergesIn: on the confined path too
+// (checkConfinable runs checkMounts), a mount that
+// ~/.lima/_config/default.yaml or override.yaml adds stops the start
+// before the VM or its proxy comes up, while the instance's own mounts go
+// through.
+func TestConfinedStart_RefusesMountsLimaMergesIn(t *testing.T) {
+	rw, ro := true, false
+	home := "/Users/you"
+	cases := map[string]struct {
+		configMounts []limaMountJSON
+		refused      bool
+	}{
+		"only the instance's own mounts":       {nil, false},
+		"default.yaml adds the home directory": {[]limaMountJSON{{Location: home, MountPoint: &home, Writable: &ro}}, true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			fl := newFakeLima()
+			fl.mounts = []limaMountJSON{{Location: t.TempDir(), Writable: &rw}}
+			fl.configMounts = c.configMounts
+			p, fp := newTestProvider(t, fl, true)
+
+			err := p.Start(context.Background(), "demo")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "would mount "+home+" at "+home+" (read-only)") {
+				t.Fatalf("Start error = %v, want a refusal over the merged-in home directory", err)
+			}
+			if len(fl.callsTo(sandboxExecBinary)) != 0 || len(fp.starts) != 0 {
+				t.Errorf("started despite the merged-in mount: %v", fl.verbs())
 			}
 		})
 	}
@@ -949,7 +1001,9 @@ func TestUnrestricted_StartsWithoutTheSandbox(t *testing.T) {
 	if err := p.Start(ctx, "demo"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if got, want := fl.verbs(), []string{"limactl start"}; !reflect.DeepEqual(got, want) {
+	// The list is the read-only query Start checks the instance's mounts
+	// with (checkMounts); unrestricted or not, nothing else may come first.
+	if got, want := fl.verbs(), []string{"limactl list", "limactl start"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Start ran %v, want just %v", got, want)
 	}
 	if len(fp.starts) != 0 {

@@ -349,6 +349,33 @@ every start and refuses anything that would undermine its network policy:
   a writable mount (typically of your whole home directory) would let the
   guest edit its own egress policy in `~/.config/agentctl`. Make that
   mount read-only, or share a narrower directory instead.
+- **"beyond what the instance's own configuration mounts"** — a mount that
+  `~/.lima/_config/default.yaml` or `override.yaml` adds; see
+  [below](#lima-start-fails-with-beyond-what-the-instances-own-configuration-mounts).
+
+## Lima: `start` fails with "beyond what the instance's own configuration mounts"
+
+```
+agentctl: Lima would mount /Users/you at /Users/you (read-only) in instance "demo", beyond what the instance's own configuration mounts, so agentctl won't start it. ...
+```
+
+Lima merges the `mounts` in `~/.lima/_config/default.yaml` and
+`override.yaml` (the error names the exact files) into every instance it
+starts, agentctl's included. A mount you set up there for your other Lima VMs
+would reach this sandbox too, without passing any of agentctl's mount checks,
+so `start` checks what Lima would actually mount and stops when that's more
+than the instance itself declares (see
+[Lima setup](../admin/providers/lima-setup.md#mounts)).
+
+Remove the entry from that file. If this sandbox should see the directory,
+name it to agentctl instead:
+
+```console
+$ agentctl start demo --mount ~/src/project:/workspace:w
+```
+
+The check runs on every `start`, so editing those files can stop a sandbox
+that started fine before.
 
 ## Lima: "network confinement check failed"
 
