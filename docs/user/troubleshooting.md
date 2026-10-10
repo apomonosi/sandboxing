@@ -352,6 +352,9 @@ every start and refuses anything that would undermine its network policy:
 - **"beyond what the instance's own configuration mounts"** — a mount that
   `~/.lima/_config/default.yaml` or `override.yaml` adds; see
   [below](#lima-start-fails-with-beyond-what-the-instances-own-configuration-mounts).
+- **"would forward the host's SSH agent" (or "X11 display")** — Lima would
+  forward one of them into the guest; see
+  [below](#lima-start-fails-with-would-forward-the-hosts-ssh-agent-or-x11-display).
 
 ## Lima: `start` fails with "beyond what the instance's own configuration mounts"
 
@@ -375,6 +378,38 @@ $ agentctl start demo --mount ~/src/project:/workspace:w
 ```
 
 The check runs on every `start`, so editing those files can stop a sandbox
+that started fine before.
+
+## Lima: `start` fails with "would forward the host's SSH agent" (or "X11 display")
+
+```
+agentctl: Lima would forward the host's SSH agent into instance "demo", so agentctl won't start it: anything in the guest could use it to authenticate as you. ...
+```
+
+Lima forwards your SSH agent into an instance when its `ssh.forwardAgent` is
+on, and your X11 display when its `ssh.forwardX11` is. The agent would let
+anything in the sandbox authenticate as you, and X11 would give it your
+display, so agentctl creates sandboxes with both off, and `start` stops if Lima
+would turn one back on (see
+[Lima setup](../admin/providers/lima-setup.md#ssh-agent-and-x11-forwarding)).
+That happens one of two ways:
+
+- **`~/.lima/_config/override.yaml` turns it on** (the error names the exact
+  file). Lima applies `override.yaml` over every instance's own settings, so
+  remove it there. If you want agent forwarding for your other Lima VMs, set it
+  in `default.yaml` instead: an agentctl sandbox turns it off itself, and
+  `default.yaml` doesn't override that.
+- **The instance doesn't turn it off itself**, because an older agentctl
+  created it, or `limactl` did, so `default.yaml` or the template still reaches
+  it. Turn it off for this instance, then `start` it again:
+
+    ```console
+    $ limactl edit --set '.ssh.forwardAgent = false' --start=false demo
+    ```
+
+    For X11, the same with `.ssh.forwardX11`.
+
+The check runs on every `start`, so editing `override.yaml` can stop a sandbox
 that started fine before.
 
 ## Lima: "network confinement check failed"

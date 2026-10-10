@@ -27,6 +27,8 @@ func TestBuildCreateArgs_Full(t *testing.T) {
 		"--set", `.disk = "20GiB"`,
 		"--set", `.user.name = "claude"`,
 		"--set", `.user.sudo = true`,
+		"--set", `.ssh.forwardAgent = false`,
+		"--set", `.ssh.forwardX11 = false`,
 		"--set", `.mounts = []`,
 		"--set", `.mounts += [{"location": "/host/ws", "mountPoint": "/workspace", "writable": false}]`,
 		"--set", `.portForwards += [{"guestPort": 80, "hostPort": 8080, "proto": "tcp"}]`,
@@ -60,6 +62,20 @@ func TestBuildCreateArgs_DefaultUsername_FallsBackToAgent(t *testing.T) {
 	}
 	if !sawSudo {
 		t.Errorf("buildCreateArgs() = %v, want it to include .user.sudo = true", got)
+	}
+}
+
+// TestBuildSetExpressions_ForwardingAlwaysOff pins the instance's own
+// ssh.forwardAgent and ssh.forwardX11 off for a bare spec too: that's what
+// keeps a ~/.lima/_config/default.yaml turning them on for the user's other
+// Lima VMs from reaching the sandbox, since Lima only applies it to fields
+// the instance leaves unset.
+func TestBuildSetExpressions_ForwardingAlwaysOff(t *testing.T) {
+	got := buildSetExpressions(provider.InstanceSpec{})
+	for _, want := range []string{".ssh.forwardAgent = false", ".ssh.forwardX11 = false"} {
+		if !containsExpr(got, want) {
+			t.Errorf("buildSetExpressions() = %v, want it to include %q", got, want)
+		}
 	}
 }
 

@@ -72,7 +72,8 @@ func buildEditArgs(name, expr string) []string {
 
 // buildSetExpressions returns one yq expression per structured
 // InstanceSpec field, in a fixed order for deterministic output/testing:
-// resources, forced user identity, mounts, port forwards.
+// resources, forced user identity, forced-off SSH forwarding, mounts, port
+// forwards.
 //
 // spec.Profiles is deliberately not translated to anything: by the time
 // Provider.Create receives spec, internal/cli/create.go has already fully
@@ -108,6 +109,14 @@ func buildSetExpressions(spec provider.InstanceSpec) []string {
 	// default) so --root never hangs on an unexpected sudo password
 	// prompt regardless of which template spec.Image points at.
 	exprs = append(exprs, ".user.sudo = true")
+
+	// Forced off unconditionally too, so the host's SSH agent and X11
+	// display stay out of the sandbox whatever the template says — and
+	// whatever $LIMA_HOME/_config/default.yaml says, which many people use
+	// to turn agent forwarding on for all their Lima VMs, but which Lima
+	// only applies to fields the instance leaves unset. override.yaml
+	// still beats this; Start refuses that instead (see checkForwarding).
+	exprs = append(exprs, ".ssh.forwardAgent = false", ".ssh.forwardX11 = false")
 
 	exprs = append(exprs, buildMountExpressions(spec.Mounts)...)
 

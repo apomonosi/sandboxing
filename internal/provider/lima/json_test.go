@@ -52,6 +52,26 @@ func TestParseLimaList_EffectiveMounts(t *testing.T) {
 	}
 }
 
+// TestParseLimaList_EffectiveSSH uses a line of real `limactl list --json`
+// output (Lima v2.2.1, trimmed) for an instance agentctl created, with an
+// override.yaml that sets ssh.forwardAgent. Lima reports no mounts key at
+// all for an empty mount set.
+func TestParseLimaList_EffectiveSSH(t *testing.T) {
+	line := `{"name":"new","status":"Stopped","dir":"/home/u/.lima/new","vmType":"qemu","arch":"x86_64",` +
+		`"config":{"vmType":"qemu","ssh":{"localPort":0,"loadDotSSHPubKeys":false,"forwardAgent":true,"forwardX11":false,"forwardX11Trusted":false},` +
+		`"user":{"name":"agent","comment":"Ubuntu","home":"/home/agent.guest","shell":"/bin/bash","uid":1000,"passwordlessSudo":true}},"protected":false}` + "\n"
+	got, err := parseLimaList([]byte(line))
+	if err != nil {
+		t.Fatalf("parseLimaList: %v", err)
+	}
+	if len(got) != 1 || got[0].Config == nil {
+		t.Fatalf("parseLimaList() = %+v, want one instance with its effective configuration", got)
+	}
+	if ssh := got[0].Config.SSH; !ssh.ForwardAgent || ssh.ForwardX11 {
+		t.Errorf("Config.SSH = %+v, want forwardAgent on and forwardX11 off", ssh)
+	}
+}
+
 func TestParseLimaList_Empty(t *testing.T) {
 	got, err := parseLimaList([]byte(""))
 	if err != nil {

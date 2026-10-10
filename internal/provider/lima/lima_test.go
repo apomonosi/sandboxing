@@ -232,6 +232,53 @@ func TestStart_RefusesMountsLimaMergesIn(t *testing.T) {
 	assertNotStarted(t, fr)
 }
 
+// TestStart_RefusesForwarding is the regression test for a sandbox getting
+// the host's SSH agent or X11 display through Lima: create turns both off
+// in the instance's own configuration, but an override.yaml can turn either
+// back on for every instance. Each "ssh" object is what Lima v2.2.1
+// reports.
+func TestStart_RefusesForwarding(t *testing.T) {
+	cases := []struct {
+		name    string
+		ssh     string
+		wantErr string // substring; "" means Start goes ahead
+	}{
+		{
+			name: "both off",
+			ssh:  `{"localPort":0,"loadDotSSHPubKeys":false,"forwardAgent":false,"forwardX11":false,"forwardX11Trusted":false}`,
+		},
+		{
+			name:    "override.yaml turns agent forwarding on",
+			ssh:     `{"localPort":0,"loadDotSSHPubKeys":false,"forwardAgent":true,"forwardX11":false,"forwardX11Trusted":false}`,
+			wantErr: "would forward the host's SSH agent",
+		},
+		{
+			name:    "override.yaml turns X11 forwarding on",
+			ssh:     `{"localPort":0,"loadDotSSHPubKeys":false,"forwardAgent":false,"forwardX11":true,"forwardX11Trusted":false}`,
+			wantErr: "would forward the host's X11 display",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := &fakeRunner{listJSON: `[{"name":"demo","status":"Stopped","dir":"/lima/demo","config":{"ssh":` + tc.ssh + `}}]`}
+			p := NewWithRunner(fr).(*Provider)
+
+			err := p.Start(context.Background(), "demo")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				assertLastCall(t, fr, append([]string{binary}, buildStartArgs("demo")...))
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Start() = %v, want it refused with %q", err, tc.wantErr)
+			}
+			assertNotStarted(t, fr)
+		})
+	}
+}
+
 func TestStart_NotFound(t *testing.T) {
 	fr := &fakeRunner{listJSON: `[{"name":"other","status":"Stopped","config":{"mounts":[]}}]`}
 	p, _ := newTestProvider(t, fr, false)

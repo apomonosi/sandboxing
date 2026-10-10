@@ -105,6 +105,8 @@ type fakeLima struct {
 	envOverride       map[string]string
 	mounts            []limaMountJSON // the instance's own, in dir/lima.yaml
 	configMounts      []limaMountJSON // what default.yaml/override.yaml add
+	forwardAgent      bool            // effective ssh.forwardAgent
+	forwardX11        bool            // effective ssh.forwardX11
 	probeOutput       string          // default: blocked
 	failSandboxStart  bool
 }
@@ -201,7 +203,8 @@ func (f *fakeLima) listJSON() []byte {
 	line, _ := json.Marshal(map[string]any{
 		"name": f.name, "status": status, "dir": f.dir, "vmType": vmType, "network": networks,
 		"sshLocalPort": sshPort, "hostAgentPID": f.hostAgentPID,
-		"config": map[string]any{"propagateProxyEnv": propagate, "env": env, "mounts": mounts},
+		"config": map[string]any{"propagateProxyEnv": propagate, "env": env, "mounts": mounts,
+			"ssh": map[string]any{"forwardAgent": f.forwardAgent, "forwardX11": f.forwardX11}},
 	})
 	return append(line, '\n')
 }
@@ -482,6 +485,43 @@ func TestConfinedStart_RefusesMountsLimaMergesIn(t *testing.T) {
 			}
 			if len(fl.callsTo(sandboxExecBinary)) != 0 || len(fp.starts) != 0 {
 				t.Errorf("started despite the merged-in mount: %v", fl.verbs())
+			}
+		})
+	}
+}
+
+// TestConfinedStart_RefusesSSHForwarding: on the confined path too
+// (checkConfinable runs checkForwarding), Lima forwarding the host's SSH
+// agent or X11 display — which override.yaml can turn on — stops the start
+// before the VM or its proxy comes up. The sandbox profile allows unix
+// sockets, so a forwarded agent would be fully usable from the guest.
+func TestConfinedStart_RefusesSSHForwarding(t *testing.T) {
+	cases := map[string]struct {
+		agent, x11 bool
+		refusal    string
+	}{
+		"neither":   {false, false, ""},
+		"SSH agent": {true, false, "the host's SSH agent"},
+		"X11":       {false, true, "the host's X11 display"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			fl := newFakeLima()
+			fl.forwardAgent, fl.forwardX11 = c.agent, c.x11
+			p, fp := newTestProvider(t, fl, true)
+
+			err := p.Start(context.Background(), "demo")
+			if c.refusal == "" {
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "would forward "+c.refusal) {
+				t.Fatalf("Start error = %v, want a refusal to forward %s", err, c.refusal)
+			}
+			if len(fl.callsTo(sandboxExecBinary)) != 0 || len(fp.starts) != 0 {
+				t.Errorf("started despite forwarding: %v", fl.verbs())
 			}
 		})
 	}

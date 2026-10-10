@@ -188,6 +188,12 @@ it exactly the cross-boundary access this tool exists to prevent. See
 [Viewing a Sandbox](../user/view-and-console.md) for what `agentctl view`
 does instead per provider.
 
+The same goes for Lima's own `ssh.forwardX11`, and for `ssh.forwardAgent`,
+which would let the sandbox use every key your SSH agent holds without ever
+reading `~/.ssh`. agentctl creates Lima sandboxes with both off, and refuses to
+start one whose effective configuration turns either back on — see
+[Lima setup](providers/lima-setup.md#ssh-agent-and-x11-forwarding).
+
 ## What's honest about current limitations
 
 `agentctl` is explicit, via its [capability model](../reference/capability-model.md),

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 // NOTE: the network-confinement fields (vmType through config) were
 // checked against the JSON tags of Lima v2.2's limatype.Instance source;
 // name, status, dir, vmType, sshLocalPort, and config's propagateProxyEnv,
-// env and mounts also against `limactl list --json` from a Lima v2.2.1
+// env, mounts and ssh also against `limactl list --json` from a Lima v2.2.1
 // build (on Linux, not macOS, and only for a stopped instance with no
 // additional networks). That same source shows the output has no guest IP
 // address field at all (so Instance.IPs stays unpopulated on this
@@ -49,13 +50,35 @@ type limaInstanceJSON struct {
 	Config *limaConfigJSON `json:"config"`
 }
 
+// configDir returns $LIMA_HOME/_config, which holds the default.yaml and
+// override.yaml Lima merges into every instance: Dir's parent is
+// $LIMA_HOME. It's spelled "$LIMA_HOME/_config" if limactl reported no
+// Dir.
+func (j limaInstanceJSON) configDir() string {
+	if j.Dir == "" {
+		return filepath.Join("$LIMA_HOME", "_config")
+	}
+	return filepath.Join(filepath.Dir(j.Dir), "_config")
+}
+
 // limaConfigJSON is the part of an instance's effective lima.yaml that
-// Start checks: what network confinement depends on (checkConfinable), and
-// what the guest gets mounted (checkMounts).
+// Start checks: what network confinement depends on (checkConfinable),
+// what the guest gets mounted (checkMounts), and what Lima forwards into it
+// from the host (checkForwarding).
 type limaConfigJSON struct {
 	PropagateProxyEnv *bool             `json:"propagateProxyEnv"`
 	Env               map[string]string `json:"env"`
 	Mounts            []limaMountJSON   `json:"mounts"`
+	SSH               limaSSHJSON       `json:"ssh"`
+}
+
+// limaSSHJSON is the part of the effective configuration's ssh section
+// that says what Lima forwards from the host into the guest. Lima fills
+// both fields in (default: false) before reporting them, so only a Lima
+// without the setting leaves one out — and that Lima can't forward it.
+type limaSSHJSON struct {
+	ForwardAgent bool `json:"forwardAgent"`
+	ForwardX11   bool `json:"forwardX11"`
 }
 
 // limaMountJSON is one host directory shared into the guest, as Lima

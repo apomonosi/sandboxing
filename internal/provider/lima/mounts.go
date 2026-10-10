@@ -58,10 +58,7 @@ func checkMounts(j limaInstanceJSON) error {
 		if writable {
 			access = "writable"
 		}
-		cfgDir := filepath.Join("$LIMA_HOME", "_config")
-		if j.Dir != "" {
-			cfgDir = filepath.Join(filepath.Dir(j.Dir), "_config")
-		}
+		cfgDir := j.configDir()
 		return fmt.Errorf("Lima would mount %s at %s (%s) in instance %q, beyond what the instance's own configuration mounts, so agentctl won't start it. "+
 			"Lima merges the mounts in %s and %s into every instance it starts: remove the entry there. "+
 			"To give this sandbox a directory, use `agentctl start %s --mount` instead",
