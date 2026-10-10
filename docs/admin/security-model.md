@@ -112,6 +112,12 @@ named at `create` or `start` time. The defaults that make that hold:
   start` compares what Lima will actually mount with the instance's own
   configuration, and refuses to boot a sandbox that would see anything more —
   see [Lima setup](providers/lima-setup.md#mounts).
+- **Nor can it open other channels to the host.** A Lima reverse socket
+  forward would hand the sandbox a socket on the host (the Docker daemon's,
+  say), and `copyToHost` would let it decide what Lima writes to a host file.
+  agentctl uses neither: `create` clears the template's `copyToHost`, and
+  `start` refuses a sandbox whose effective configuration has either — see
+  [Lima setup](providers/lima-setup.md#host-sockets-and-copied-files).
 
 Two honest limits. First, read-only enforcement is per-provider — see the
 [capability matrix](capability-matrix.md); on Incus it is asserted from the
@@ -187,6 +193,12 @@ potentially-compromised agent's X session onto a shared display would hand
 it exactly the cross-boundary access this tool exists to prevent. See
 [Viewing a Sandbox](../user/view-and-console.md) for what `agentctl view`
 does instead per provider.
+
+The same goes for Lima's own `ssh.forwardX11`, and for `ssh.forwardAgent`,
+which would let the sandbox use every key your SSH agent holds without ever
+reading `~/.ssh`. agentctl creates Lima sandboxes with both off, and refuses to
+start one whose effective configuration turns either back on — see
+[Lima setup](providers/lima-setup.md#ssh-agent-and-x11-forwarding).
 
 ## What's honest about current limitations
 

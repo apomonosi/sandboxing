@@ -37,14 +37,21 @@ create request: CPU/memory/disk limits, mounts, and published ports.
 > create` never leaves the instance in a partially-configured state you'd
 > need to fix by hand.
 
-agentctl always forces two fields regardless of what the template's own
-cloud-init defaults are:
+agentctl always forces these fields, whatever the template says:
 
 - `.user.name` — the sandbox's non-root default user (`agent` unless
   `--agent=<name>` or an explicit override sets it otherwise), for
   consistency with the Incus backend's own non-root-by-default behavior.
-- `.user.sudo = true` — passwordless sudo, so `agentctl exec/shell --root`
-  never hangs on an unexpected password prompt.
+- `.user.passwordlessSudo = true` — passwordless sudo, so `agentctl
+  exec/shell --root` never hangs on an unexpected password prompt. Lima
+  defaults to this already, but a template or `~/.lima/_config/default.yaml`
+  can turn it off. macOS guests are left alone: Lima doesn't support
+  passwordless sudo there, so `--root` needs the guest user's password.
+- `.ssh.forwardAgent = false` and `.ssh.forwardX11 = false` — so Lima doesn't
+  forward your SSH agent or X11 display into the sandbox (see
+  [SSH agent and X11 forwarding](#ssh-agent-and-x11-forwarding)).
+- `.copyToHost = []` — so Lima doesn't copy files out of the sandbox onto your
+  host (see [Host sockets and copied files](#host-sockets-and-copied-files)).
 
 `agentctl exec`/`shell` run as that user via `limactl shell <name> --
 <command>`; `--root` runs `sudo -n <command>` (exec) or `sudo -i` (shell)
@@ -79,6 +86,52 @@ An instance created before agentctl reset the template's mounts still declares
 the home-directory mount in its own configuration, so this check doesn't catch
 it; `agentctl start <name> --mount-none` (or `--mount ...`) replaces it. The
 check only runs on `agentctl start`; a plain `limactl start` skips it.
+
+### SSH agent and X11 forwarding
+
+Lima can forward your SSH agent (`ssh.forwardAgent`) and your X11 display
+(`ssh.forwardX11`) into an instance. Both are off by default, and agentctl
+keeps them off. With your agent, anything in the sandbox could authenticate as
+you wherever your keys are accepted — push to your GitHub repositories, log in
+to your servers — without ever reading a key file. Lima forwards it over its
+own SSH connection too, not only during `agentctl shell`/`exec`, and links it
+at `/run/host-services/ssh-auth.sock` in the guest for as long as the instance
+runs. X11 is excluded for the reasons in the
+[security model](../security-model.md#why-raw-x11-forwarding-is-excluded).
+
+Many people turn agent forwarding on for all their Lima VMs in
+`~/.lima/_config/default.yaml`. That doesn't reach an agentctl sandbox: Lima
+only applies `default.yaml` to fields an instance leaves unset, and `create`
+sets both to `false`. `override.yaml` beats an instance's own settings,
+though, so `agentctl start` first checks what Lima will actually do
+(`limactl list <name> --json`) and refuses to start an instance that would
+forward either one. That also catches an instance created before agentctl
+turned forwarding off, which `default.yaml` still reaches. If `start` refuses,
+see
+[Troubleshooting](../../user/troubleshooting.md#lima-start-fails-with-would-forward-the-hosts-ssh-agent-or-x11-display).
+Like the mount check, this only runs on `agentctl start`.
+
+### Host sockets and copied files
+
+Two more Lima settings reach from the guest back to your host, and agentctl
+uses neither:
+
+- A `portForwards` entry with `reverse: true` forwards a socket on your host
+  into the guest, so anything in the sandbox can talk to whatever listens on
+  it — your Docker daemon (root on your host, in effect), say, or your GPG
+  agent. Ordinary port forwards, like the ones `--port` publishes, go the
+  other way and are fine.
+- `copyToHost` has Lima copy a file out of the guest onto your host once it
+  boots, so the sandbox decides what's written there. Lima's own Kubernetes
+  templates (`k3s`, `k8s` and others) use it to copy out a kubeconfig for your
+  `kubectl`.
+
+`create` clears `copyToHost`, the way it resets the template's mounts, so those
+templates still work; no stock template has a reverse forward. But Lima merges
+both from `~/.lima/_config/default.yaml` and `override.yaml` into every
+instance it starts, so `agentctl start` refuses an instance whose effective
+configuration has any of either, whatever added it. If `start` refuses, see
+[Troubleshooting](../../user/troubleshooting.md#lima-start-fails-with-would-forward-the-host-socket-or-would-copy).
 
 ## Network policy enforcement
 

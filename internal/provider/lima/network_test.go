@@ -103,9 +103,13 @@ type fakeLima struct {
 	sshPortOverride   int
 	propagateOverride *bool
 	envOverride       map[string]string
-	mounts            []limaMountJSON // the instance's own, in dir/lima.yaml
-	configMounts      []limaMountJSON // what default.yaml/override.yaml add
-	probeOutput       string          // default: blocked
+	mounts            []limaMountJSON       // the instance's own, in dir/lima.yaml
+	configMounts      []limaMountJSON       // what default.yaml/override.yaml add
+	forwardAgent      bool                  // effective ssh.forwardAgent
+	forwardX11        bool                  // effective ssh.forwardX11
+	portForwards      []limaPortForwardJSON // effective portForwards
+	copyToHost        []limaCopyToHostJSON  // effective copyToHost
+	probeOutput       string                // default: blocked
 	failSandboxStart  bool
 }
 
@@ -201,7 +205,9 @@ func (f *fakeLima) listJSON() []byte {
 	line, _ := json.Marshal(map[string]any{
 		"name": f.name, "status": status, "dir": f.dir, "vmType": vmType, "network": networks,
 		"sshLocalPort": sshPort, "hostAgentPID": f.hostAgentPID,
-		"config": map[string]any{"propagateProxyEnv": propagate, "env": env, "mounts": mounts},
+		"config": map[string]any{"propagateProxyEnv": propagate, "env": env, "mounts": mounts,
+			"ssh":          map[string]any{"forwardAgent": f.forwardAgent, "forwardX11": f.forwardX11},
+			"portForwards": f.portForwards, "copyToHost": f.copyToHost},
 	})
 	return append(line, '\n')
 }
@@ -482,6 +488,87 @@ func TestConfinedStart_RefusesMountsLimaMergesIn(t *testing.T) {
 			}
 			if len(fl.callsTo(sandboxExecBinary)) != 0 || len(fp.starts) != 0 {
 				t.Errorf("started despite the merged-in mount: %v", fl.verbs())
+			}
+		})
+	}
+}
+
+// TestConfinedStart_RefusesSSHForwarding: on the confined path too
+// (checkConfinable runs checkForwarding), Lima forwarding the host's SSH
+// agent or X11 display — which override.yaml can turn on — stops the start
+// before the VM or its proxy comes up. The sandbox profile allows unix
+// sockets, so a forwarded agent would be fully usable from the guest.
+func TestConfinedStart_RefusesSSHForwarding(t *testing.T) {
+	cases := map[string]struct {
+		agent, x11 bool
+		refusal    string
+	}{
+		"neither":   {false, false, ""},
+		"SSH agent": {true, false, "the host's SSH agent"},
+		"X11":       {false, true, "the host's X11 display"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			fl := newFakeLima()
+			fl.forwardAgent, fl.forwardX11 = c.agent, c.x11
+			p, fp := newTestProvider(t, fl, true)
+
+			err := p.Start(context.Background(), "demo")
+			if c.refusal == "" {
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "would forward "+c.refusal) {
+				t.Fatalf("Start error = %v, want a refusal to forward %s", err, c.refusal)
+			}
+			if len(fl.callsTo(sandboxExecBinary)) != 0 || len(fp.starts) != 0 {
+				t.Errorf("started despite forwarding: %v", fl.verbs())
+			}
+		})
+	}
+}
+
+// TestConfinedStart_RefusesHostChannels: on the confined path too
+// (checkConfinable runs checkHostChannels), a reverse port forward or a
+// copyToHost entry stops the start before the VM or its proxy comes up,
+// while an ordinary guest-to-host port forward (what --port publishes)
+// goes through.
+func TestConfinedStart_RefusesHostChannels(t *testing.T) {
+	cases := map[string]struct {
+		portForwards []limaPortForwardJSON
+		copyToHost   []limaCopyToHostJSON
+		refusal      string
+	}{
+		"ordinary port forward": {portForwards: []limaPortForwardJSON{{GuestSocket: "/run/app.sock", HostSocket: "/tmp/app.sock"}}},
+		"reverse socket forward": {
+			portForwards: []limaPortForwardJSON{{GuestSocket: "/run/docker.sock", HostSocket: "/var/run/docker.sock", Reverse: true}},
+			refusal:      "would forward the host socket /var/run/docker.sock",
+		},
+		"copyToHost": {
+			copyToHost: []limaCopyToHostJSON{{GuestFile: "/etc/rancher/k3s/k3s.yaml", HostFile: "/Users/you/.kube/config"}},
+			refusal:    "would copy /etc/rancher/k3s/k3s.yaml",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			fl := newFakeLima()
+			fl.portForwards, fl.copyToHost = c.portForwards, c.copyToHost
+			p, fp := newTestProvider(t, fl, true)
+
+			err := p.Start(context.Background(), "demo")
+			if c.refusal == "" {
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.refusal) {
+				t.Fatalf("Start error = %v, want one containing %q", err, c.refusal)
+			}
+			if len(fl.callsTo(sandboxExecBinary)) != 0 || len(fp.starts) != 0 {
+				t.Errorf("started despite the host channel: %v", fl.verbs())
 			}
 		})
 	}

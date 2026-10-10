@@ -42,7 +42,8 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 // machine state); nothing is recorded. Elsewhere, and for an instance
 // created with --no-network-policy, it's the one `limactl start`, again
 // without the read-only `limactl list` query Start checks the instance's
-// mounts with first (see checkMounts).
+// mounts, forwarding and host channels with first (see checkMounts,
+// checkForwarding and checkHostChannels).
 //
 // If the plan can't be computed (no home directory to keep instance state
 // in, or no free loopback ports), it returns nothing rather than a
