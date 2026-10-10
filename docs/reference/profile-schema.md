@@ -15,12 +15,21 @@ spec:
                                 # RFC1918 (10/8, 172.16/12, 192.168/16) and
                                 # link-local (169.254/16) egress
     allow:                      # egress allowlist; everything unmatched is denied
-      - domain: string          # hostname, or "*.example.com" wildcard (the
-                                 # apex domain is what actually gets resolved
-                                 # and matched — see the security model doc)
+      - domain: string          # hostname, "*.example.com" wildcard (on Incus
+                                 # only the apex domain gets resolved and
+                                 # matched — see the security model doc), or
+                                 # IP address; not a URL
         ports: [int]            # optional; TCP ports allowed for this domain
-    allowFile: string            # optional path to an external allow-rule file,
-                                  # merged in at load time (mirrors --allow-file)
+                                 # (omitted: any port)
+    allowPresets: [string]       # optional; built-in host groups added to the
+                                  # allowlist: apk, apt, github, gitlab, npm,
+                                  # pypi, and the agents claude, codex,
+                                  # cursor, gemini, opencode, pi
+                                  # (`agentctl profile presets` lists them;
+                                  # mirrors --allow-preset)
+    allowFile: string            # optional; an allow file whose entries are
+                                  # added to `allow` when this file is loaded
+                                  # (format below; mirrors --allow-file)
     ports:                       # host:guest port publishes, Docker-style
       - host: int
         guest: int
@@ -50,6 +59,35 @@ spec:
   packages: [string]              # tools installed into the guest during
                                    # create; see "Packages" below
 ```
+
+## Allow presets
+
+Each `allowPresets` name stands for a fixed list of allow rules, defined in
+`internal/profile/presets.go` and added after the profile's own `allow`
+entries when the policy is applied. Run `agentctl profile presets` to see
+every preset's hosts and ports; [Profiles & Policies](../user/profiles-and-policies.md#allowing-package-sources-and-git-hosts)
+covers what each is for. A profile shows (`profile show`) and merges presets
+by name, so a newer `agentctl` that updates a preset's hosts applies the
+update to existing profiles.
+
+## Allow file format
+
+`allowFile` (and `create --allow-file`) name a plain-text file with one
+allowlist entry per line, in the same forms `--allow` accepts
+(`example.com:443`, `example.com:80,443`, `*.example.com`,
+`[2001:db8::1]:443`, `https://example.com`, ...; see
+[Profiles & Policies](../user/profiles-and-policies.md#egress-allowlist)).
+Blank lines are ignored and `#` starts a comment.
+
+- A relative `allowFile` path is resolved against the directory of the
+  profile or spec file that names it, and `~/` against your home
+  directory. (`--allow-file` paths are relative to the current directory.)
+- The file is read when the profile or spec is loaded: its entries are
+  appended to `allow`, and `allowFile` is cleared — so `agentctl profile
+  show` prints the merged rules — and a missing file or invalid line is a
+  load error naming the file and line.
+- An embedded built-in profile can't use `allowFile`; there's no
+  directory for a relative path to be relative to.
 
 ## Packages
 
@@ -120,8 +158,10 @@ byte count. Must be positive; zero and negative sizes are rejected.
 
 - `apiVersion`/`kind` match the constants above
 - `metadata.name` is non-empty
-- Every `allow[].domain` is non-empty and whitespace-free; every
-  `allow[].ports` entry is in `1..65535`
+- Every `allow[].domain` is a valid hostname, `*.`-wildcard hostname, or IP
+  address — not a URL, address range, or `host:port` (all of which no
+  backend could ever match); every `allow[].ports` entry is in `1..65535`
+- Every `allowPresets` entry names a built-in preset
 - Every `ports[].host`/`ports[].guest` is in `1..65535`; `protocol` is `tcp`
   or `udp`; no two `ports` entries publish the same host port + protocol
 - `resources.cpuCores >= 0`; `resources.memory`/`diskSize`, if set, parse via
@@ -170,6 +210,13 @@ spec:
 Merging is narrow-only, like `mountPolicy`: an override that names servers
 replaces a broader base, and `disabled` is OR'd so the most restrictive layer
 in the chain wins.
+
+All of this is the Incus backend's. A Lima guest has no DNS egress of its
+own — its queries are answered by Lima's host resolver, i.e. the Mac's own
+DNS settings — so there is nothing for `servers` or `disabled` to narrow, and
+agentctl can't switch that resolver off. A profile or spec that sets either
+is refused at `create` on Lima rather than silently not applied; see
+[Lima setup](../admin/providers/lima-setup.md#what-this-means-in-practice).
 
 There is deliberately **no profile field for disabling network policy
 wholesale**. The `--no-network-policy` escape hatch is a per-invocation CLI
@@ -228,6 +275,9 @@ profile with ad-hoc `create` flags:
 
 - `network.allow`, `network.ports`, `mounts`: **additive union** — override
   entries are appended after base's
+- `network.allowPresets`: **union**, each preset once
+- `network.allowFile` doesn't take part: by the time profiles are merged,
+  each one's allow file has already been read into its `allow`
 - `packages`: **additive union, deduped** — no layer can withdraw a tool an
   earlier one asked for, and two layers both asking for `git` install it
   once. Plain accumulation rather than `mountPolicy`'s narrow-only
@@ -260,3 +310,6 @@ spec:
   overrides: Policy       # same Policy shape as a profile's spec, layered on
                           # top of the named profiles via Merge
 ```
+
+`overrides` is validated with the same rules as a profile's `spec`, and its
+`network.allowFile`, if set, is resolved against the spec file's directory.

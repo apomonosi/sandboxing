@@ -29,8 +29,8 @@ type Spec struct {
 }
 
 // Registry is the static table of installable agents, keyed by the name
-// passed to --agent. Values verified directly from each project's own
-// docs (not reconstructed from memory):
+// passed to --agent. Install commands verified directly from each
+// project's own docs (not reconstructed from memory):
 //   - claude:   https://code.claude.com/docs/en/quickstart
 //   - codex:    https://learn.chatgpt.com/docs/codex/cli
 //   - opencode: https://opencode.ai/download
@@ -38,14 +38,14 @@ type Spec struct {
 //   - gemini:   https://github.com/google-gemini/gemini-cli
 //   - cursor:   https://cursor.com/docs/cli/installation
 //
-// opencode and pi are explicitly multi-provider: their AllowDomains only
-// guarantee the install domain (opencode) or the install domain plus the
-// default-provider runtime domain (pi, which defaults to Anthropic but
-// supports others) — a user on a different provider extends the
-// allowlist the same way they would for anything else, via --allow.
+// The hosts each agent needs live in the built-in allow preset of the same
+// name (internal/profile/presets.go, which also records where each host
+// list was checked and why some documented hosts are left out), so
+// `--allow-preset=<name>` allows exactly what `--agent=<name>` does, for
+// when the agent gets installed some other way.
 //
 // Two things about the entries below are worth knowing before relying on
-// them, because they differ from the curl-installer shape the first four
+// them, because they differ from the curl-installer shape the others
 // share:
 //
 //   - gemini is the only agent with no curl-based installer. Google
@@ -59,70 +59,32 @@ type Spec struct {
 //     would be agentctl inventing an install path the agent's own docs
 //     don't describe; see docs/user/agent-provisioning.md.
 //   - cursor's runtime traffic is spread across more domains than any
-//     other entry here. Cursor's own network-configuration docs
-//     recommend *.cursor.sh, *.cursorapi.com and *.cursor-cdn.com, and
-//     name api2.cursor.sh as carrying most API requests, with
-//     api3/api4/api5, repo42 and authentication subdomains needed in
-//     some setups. The entry covers install plus the primary API path;
-//     anything beyond that is a --allow extension, same as the
-//     multi-provider agents above.
-//
-// PREFER CONCRETE HOSTNAMES OVER WILDCARDS HERE. A "*.example.com" entry
-// does not do what it looks like: the Incus backend resolves allow-rules
-// to IP addresses, and it does that by stripping the "*." and resolving
-// the *apex* (see resolveAllowRules in internal/provider/incus). So
-// "*.anthropic.com" produced an allow rule for anthropic.com — the
-// marketing site — while api.anthropic.com, which is where Claude Code
-// actually sends every request, resolves elsewhere and stayed blocked.
-// That was a real failure on a live host, not a theoretical one. A
-// wildcard is only worth using when the apex is itself a destination.
+//     other entry here; its preset covers install plus the primary API
+//     path, and anything beyond that is a --allow extension.
 var Registry = map[string]Spec{
 	"claude": {
 		Name:          "claude",
 		InstallScript: "curl -fsSL https://claude.ai/install.sh | bash",
 		EnvVar:        "ANTHROPIC_API_KEY",
-		// Anthropic publishes this list; see
-		// https://code.claude.com/docs/en/network-config. Two more it
-		// names are left out deliberately: raw.githubusercontent.com is
-		// a very broad grant for what it buys, and *.sentry.io is
-		// optional error reporting. Add either with --allow if you need
-		// them.
-		AllowDomains: []profile.AllowRule{
-			{Domain: "claude.ai", Ports: []int{443}},
-			{Domain: "downloads.claude.ai", Ports: []int{443}},
-			{Domain: "platform.claude.com", Ports: []int{443}},
-			{Domain: "api.anthropic.com", Ports: []int{443}},
-			{Domain: "statsig.anthropic.com", Ports: []int{443}},
-		},
+		AllowDomains:  presetRules("claude"),
 	},
 	"codex": {
 		Name:          "codex",
 		InstallScript: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
 		EnvVar:        "OPENAI_API_KEY",
-		AllowDomains: []profile.AllowRule{
-			{Domain: "chatgpt.com", Ports: []int{443}},
-			{Domain: "api.openai.com", Ports: []int{443}},
-		},
+		AllowDomains:  presetRules("codex"),
 	},
 	"opencode": {
 		Name:          "opencode",
 		InstallScript: "curl -fsSL https://opencode.ai/install | bash",
 		EnvVar:        "",
-		AllowDomains: []profile.AllowRule{
-			{Domain: "opencode.ai", Ports: []int{443}},
-		},
+		AllowDomains:  presetRules("opencode"),
 	},
 	"pi": {
 		Name:          "pi",
 		InstallScript: "curl -fsSL https://pi.dev/install.sh | sh",
 		EnvVar:        "ANTHROPIC_API_KEY",
-		AllowDomains: []profile.AllowRule{
-			{Domain: "pi.dev", Ports: []int{443}},
-			// Concrete host, not *.anthropic.com: see the wildcard note
-			// above. pi defaults to Anthropic, and this is the endpoint
-			// that default actually talks to.
-			{Domain: "api.anthropic.com", Ports: []int{443}},
-		},
+		AllowDomains:  presetRules("pi"),
 	},
 	"gemini": {
 		Name: "gemini",
@@ -133,13 +95,8 @@ var Registry = map[string]Spec{
 		// GOOGLE_API_KEY + GOOGLE_GENAI_USE_VERTEXAI for Vertex AI, and
 		// GOOGLE_CLOUD_PROJECT for Code Assist). GEMINI_API_KEY is the
 		// one obvious default, which is what this field is for.
-		EnvVar: "GEMINI_API_KEY",
-		AllowDomains: []profile.AllowRule{
-			{Domain: "registry.npmjs.org", Ports: []int{443}},
-			{Domain: "generativelanguage.googleapis.com", Ports: []int{443}},
-			{Domain: "accounts.google.com", Ports: []int{443}},
-			{Domain: "oauth2.googleapis.com", Ports: []int{443}},
-		},
+		EnvVar:       "GEMINI_API_KEY",
+		AllowDomains: presetRules("gemini"),
 	},
 	"cursor": {
 		Name: "cursor",
@@ -148,18 +105,20 @@ var Registry = map[string]Spec{
 		// entries above.
 		InstallScript: "curl https://cursor.com/install -fsS | bash",
 		EnvVar:        "CURSOR_API_KEY",
-		AllowDomains: []profile.AllowRule{
-			{Domain: "cursor.com", Ports: []int{443}},
-			{Domain: "api2.cursor.sh", Ports: []int{443}},
-			// Cursor's docs also recommend *.cursorapi.com, but a
-			// wildcard here would only allow the apex (see the note
-			// above), which nothing contacts — coverage in appearance
-			// only. The one concrete host they name under it,
-			// marketplace.cursorapi.com, serves the IDE extension
-			// marketplace rather than the CLI, so it is left out until
-			// something is shown to need it.
-		},
+		AllowDomains:  presetRules("cursor"),
 	},
+}
+
+// presetRules returns the allow rules of the built-in preset called name.
+// The registry and the preset table are both static, so a missing preset
+// is a build defect (and TestLookup_KnownAgents catches it), not a runtime
+// condition.
+func presetRules(name string) []profile.AllowRule {
+	p, ok := profile.LookupPreset(name)
+	if !ok {
+		panic("agent: no built-in allow preset " + name)
+	}
+	return p.Allow
 }
 
 // Lookup returns the Spec for name and whether it was found.

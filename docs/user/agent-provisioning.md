@@ -32,22 +32,79 @@ $ claude --version
 
 ## Built-in registry
 
-| `--agent` value | Installs | Host API key it expects | Egress allowed |
+| `--agent` value | Installs | Host API key it expects | Egress allowed (port 443) |
 |---|---|---|---|
 | `claude` | Claude Code | `ANTHROPIC_API_KEY` | `claude.ai`, `downloads.claude.ai`, `platform.claude.com`, `api.anthropic.com`, `statsig.anthropic.com` |
-| `codex` | OpenAI Codex CLI | `OPENAI_API_KEY` | `chatgpt.com`, `api.openai.com` |
+| `codex` | OpenAI Codex CLI | `OPENAI_API_KEY` | `chatgpt.com`, `releases.openai.com`, `auth.openai.com`, `api.openai.com` |
 | `cursor` | Cursor CLI (`cursor-agent`) | `CURSOR_API_KEY` | `cursor.com`, `api2.cursor.sh` |
 | `gemini` | Gemini CLI | `GEMINI_API_KEY` | `registry.npmjs.org`, `generativelanguage.googleapis.com`, `accounts.google.com`, `oauth2.googleapis.com` |
-| `opencode` | opencode | *(multi-provider — none)* | `opencode.ai` |
-| `pi` | pi | `ANTHROPIC_API_KEY` *(default provider)* | `pi.dev`, `api.anthropic.com` |
+| `opencode` | opencode | *(multi-provider — none)* | `opencode.ai`, `github.com`, `api.github.com`, `release-assets.githubusercontent.com`, `models.opencode.ai` |
+| `pi` | pi | `ANTHROPIC_API_KEY` *(default provider)* | `pi.dev`, `registry.npmjs.org`, `nodejs.org`, `api.anthropic.com` |
+
+Each list covers what the installer itself fetches — install scripts
+typically download the actual program from a *different* host, which is
+why there's more here than one domain per agent — plus what the agent needs
+to sign in and talk to its default model provider:
+
+- **claude**: `claude.ai/install.sh` downloads Claude Code from
+  `downloads.claude.ai` (also where its auto-updates come from). Signing in
+  with either a claude.ai or a Console account exchanges and refreshes its
+  OAuth token with `platform.claude.com`; the API itself is
+  `api.anthropic.com`. Source: Claude Code's
+  [network access requirements](https://code.claude.com/docs/en/network-config#network-access-requirements).
+- **codex**: the installer downloads from `releases.openai.com`; signing in
+  with ChatGPT goes through `auth.openai.com`, ChatGPT-plan usage through
+  `chatgpt.com`, API-key usage through `api.openai.com`.
+- **cursor**: the install script comes from `cursor.com`, and
+  `api2.cursor.sh` carries most API requests (see the
+  [note below](#cursor-may-need-more-domains-than-the-table-lists)).
+- **gemini**: installs from npm (`registry.npmjs.org`); the Gemini API is
+  `generativelanguage.googleapis.com`, and Google sign-in uses
+  `accounts.google.com` and `oauth2.googleapis.com`.
+- **opencode**: the installer looks the latest release up on
+  `api.github.com` and downloads it from `github.com`, which redirects to
+  `release-assets.githubusercontent.com`; opencode fetches its model
+  catalog from `models.opencode.ai` at startup.
+- **pi**: the installer installs pi from the npm registry, installing
+  Node.js first if the image doesn't have it (stock Ubuntu images don't).
+  `nodejs.org` is agentctl's assumption about where that Node.js download
+  comes from, not something read out of pi's installer — if `--agent=pi`
+  fails on a blocked host, the install output names it; add it with
+  `--allow`.
+
+Every host is named outright, never as a wildcard: Lima's egress proxy
+would match a `*.example.com` entry against each hostname, but Incus
+resolves only the wildcard's apex domain (see
+[Profiles & Policies](profiles-and-policies.md#egress-allowlist)), so a
+wildcard would make the same agent's allowlist mean different things on
+the two backends.
 
 `opencode` and `pi` are explicitly multi-provider tools: `opencode` connects
 to whichever model backend you configure inside the sandbox, and `pi`
 defaults to Anthropic but also supports others. Their table entries above
-only guarantee the *install* domain (`pi` additionally covers its
-default-provider runtime domain) — if you point either at a different
+only guarantee installing them (`pi` additionally covers its
+default provider) — if you point either at a different
 model provider, extend the allowlist the same way you would for anything
 else: `agentctl create demo --agent=opencode --allow=<your-provider-domain>:443`.
+
+`--agent` only opens what the agent needs. If it will also install
+packages or clone repositories, allow those sources too — e.g.
+`--allow-preset=github,pypi` (see
+[Profiles & Policies](profiles-and-policies.md#allowing-package-sources-and-git-hosts)).
+
+## Allowing an agent without `--agent`
+
+Each agent's hosts are also an allow preset of the same name, so
+`--allow-preset=claude` (or `allowPresets: [claude]` in a profile) allows
+exactly what `--agent=claude` does without installing anything — for an
+image that already has the agent, installing it some other way, or an
+org profile meant for Claude Code work:
+
+```console
+$ agentctl create demo --image=images:ubuntu/24.04 --allow-preset=claude,apt,github
+$ agentctl start demo
+$ agentctl exec demo -- sh -c 'curl -fsSL https://claude.ai/install.sh | bash'
+```
 
 ## Tools the agent needs, that the image doesn't have
 
@@ -97,8 +154,10 @@ entry above covers install plus the primary API path (`api2.cursor.sh`), but
 Cursor's own network-configuration docs also name `api3`/`api4`/`api5`,
 `repo42.cursor.sh`, the `*.authentication.cursor.sh` hosts and
 `*.cursor-cdn.com` as needed in some setups. If something fails to connect,
-extend the allowlist the same way as for a multi-provider agent:
-`agentctl create demo --agent=cursor --allow='*.cursor.sh:443'`.
+extend the allowlist the same way as for a multi-provider agent, naming
+the hosts — `agentctl create demo --agent=cursor --allow=api3.cursor.sh:443`.
+(A wildcard such as `--allow='*.cursor.sh:443'` covers them all on Lima,
+but on Incus it only allows `cursor.sh` itself.)
 
 ## What it doesn't do (yet)
 

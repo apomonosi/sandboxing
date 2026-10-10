@@ -189,10 +189,11 @@ profile.
 `create --agent=<name>` runs that agent's install command (e.g. `curl ... |
 bash`) as soon as the instance is up — see
 [Agent Provisioning](agent-provisioning.md). This needs working egress at
-install time, so a flaky network mid-install, or an unusually restrictive
-`--allow`/profile combination that's missing a domain the install script
-itself redirects through, can leave `create` reporting a failure with the
-instance left running.
+install time, so a flaky network mid-install, or an install script that
+starts fetching from a host agentctl's registry doesn't list yet (each
+agent's allowlist covers the hosts its installer used when it was last
+checked — see [Agent Provisioning](agent-provisioning.md#built-in-registry)),
+can leave `create` reporting a failure with the instance left running.
 
 You don't need to redo anything by hand: the very next `agentctl start
 <name>` — even a completely ordinary one, with no `--agent` flag — detects
@@ -250,12 +251,120 @@ repaired the next time its user is provisioned rather than staying broken.
 `agentctl start <name>` on an instance with a pending agent install is the
 usual trigger; otherwise recreate it.
 
+## `apt`, `pip`, `npm` or `git clone` can't reach its server
+
+Egress is default-deny, so package managers and git only work against
+hosts on the instance's allowlist — and they usually need more than one
+host each (pip downloads from `files.pythonhosted.org`, not `pypi.org`;
+GitHub release downloads come from `release-assets.githubusercontent.com`).
+Create the instance with the matching
+[allow presets](profiles-and-policies.md#allowing-package-sources-and-git-hosts),
+e.g. `--allow-preset=apt,pypi,github`, and add anything else with `--allow`.
+The tool's own error usually names the host it couldn't reach (`apt-get
+update` lists each failed URL); on Lima, the instance's egress proxy log
+(see [below](#lima-a-request-from-the-sandbox-gets-403-denied-by-agentctl-network-policy))
+names every refused host:port. The allowlist is set when the instance is
+created, so recreate it with the extra entries. (Tools requested with
+`--package`/`packages:` are different: on Incus they're installed during
+`create`, before the network policy is attached — see
+[Packages](../reference/profile-schema.md#ordering-and-what-it-means-for-the-network-policy) —
+so they don't need a preset.)
+
 ## An `--allow` entry stopped working after a while
 
-Domain-based allow rules are resolved to IP addresses when the policy is
-applied — a snapshot, not dynamic DNS-aware filtering. If the target rotates
-IPs (common behind a CDN), re-apply the policy (re-run `create`'s network
-setup, or recreate the instance) to refresh it.
+On Incus, domain-based allow rules are resolved to IP addresses when the
+policy is applied — a snapshot, not dynamic DNS-aware filtering. If the
+target rotates IPs (common behind a CDN), re-apply the policy (re-run
+`create`'s network setup, or recreate the instance) to refresh it. (On
+Lima this can't happen: its egress proxy resolves the hostname on every
+connection.)
+
+## Lima: a request from the sandbox gets `403` / "denied by agentctl network policy"
+
+On Lima, the sandbox's traffic goes through a per-instance egress proxy
+(see [Lima setup](../admin/providers/lima-setup.md#network-policy-enforcement)),
+which answers a refused destination with `403 Forbidden` and the reason —
+curl shows it as `CONNECT tunnel failed, response 403` for HTTPS. Every
+decision is logged on the Mac in
+`~/.config/agentctl/lima/<name>/egress-proxy.log`, so that's the quickest
+way to see exactly which host:port was refused and why:
+
+```
+2026-10-07T19:08:50Z deny CONNECT downloads.example.com:443: not in the allowlist
+```
+
+Allow rules match the hostname the client asked for, so a site that
+redirects to another hostname (a download CDN, say) needs that hostname
+allowlisted too. Add it with `--allow` and recreate the instance — and the
+same reasons as on Incus apply to "deny-LAN is on" refusals.
+
+## Lima: a tool can't connect at all ("Connection refused"), even to an allowlisted host
+
+That tool isn't using the instance's proxy. On Lima, the sandbox's only way
+out is the egress proxy its `http_proxy`/`https_proxy` variables point at;
+a connection that doesn't go through it is refused by design, allowlisted
+destination or not (that's what stops a compromised agent from simply
+ignoring the proxy). Configure the tool to use an HTTP proxy — the
+`https_proxy` value in the sandbox's environment — or use a tool that
+honors those variables. Some common cases: Node's built-in `fetch` and
+`http`/`https` modules only honor them with `NODE_USE_ENV_PROXY=1` (or
+`--use-env-proxy`; Node 22.21+/24.5+); `git` over SSH needs an ssh
+`ProxyCommand` (or use the HTTPS remote); anything UDP-based has no way out.
+
+## Lima: `agentctl start` refuses an instance that's "already running, but agentctl didn't start it under its network sandbox"
+
+The instance was started some other way — a plain `limactl start`, for
+instance — so its egress is unrestricted, and agentctl won't pretend
+otherwise by adopting it. Stop it and start it with agentctl:
+
+```console
+$ agentctl stop <name>
+$ agentctl start <name>
+```
+
+## Lima: `agentctl start` refuses an instance "registered with launchd to start automatically"
+
+`limactl autostart enable` (formerly `start-at-login`) has launchd start the
+instance at login — outside agentctl's sandbox, with unrestricted egress.
+Unregister it with `limactl autostart disable <name>` and start it with
+agentctl instead.
+
+## Lima: `agentctl start` refuses because of the instance's configuration
+
+agentctl checks Lima's effective configuration for the instance before
+every start and refuses anything that would undermine its network policy:
+
+- **"has additional networks configured"** — a vzNAT or socket_vmnet
+  network, whose traffic doesn't go through the sandboxed Lima hostagent.
+  agentctl removes these from the instance itself, so this means one is
+  coming from `~/.lima/_config/default.yaml` or `override.yaml`; remove it
+  there.
+- **"ssh.localPort ...", "propagateProxyEnv ...", or an `http_proxy`/
+  `https_proxy`/`no_proxy` mismatch** — the same files overriding
+  settings agentctl pins for the instance; remove the override.
+- **"uses vmType ..."** — the instance doesn't use Lima's `vz` VM type
+  (the macOS default), and agentctl's enforcement is only verified for
+  `vz`. Recreate it from a template that doesn't force another VM type.
+- **"mounts ... writable, which overlaps agentctl's state directory"** —
+  a writable mount (typically of your whole home directory) would let the
+  guest edit its own egress policy in `~/.config/agentctl`. Make that
+  mount read-only, or share a narrower directory instead.
+
+## Lima: "network confinement check failed"
+
+After every start, agentctl tries a direct connection out from inside the
+guest, bypassing the proxy, to confirm it's refused. This error means it
+got through — so Lima's processes weren't running under agentctl's macOS
+sandbox as expected — and agentctl stopped the instance rather than leave
+it running unprotected. Please report it, with your macOS version and
+`limactl --version`.
+
+## Lima: an instance created by an older agentctl has no network access
+
+Instances created before Lima network enforcement existed have no recorded
+egress policy, so their proxy denies everything (failing closed, as on
+Incus with an empty allowlist). Recreate the instance with the `--allow`
+flags or profile it should have.
 
 ## Exit code reference
 

@@ -28,17 +28,60 @@ independently capability-gated concern (`ApplyNetworkPolicy` is its own
 - **`--deny-lan` defaults to on.** Every sandbox blocks egress to
   RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and link-local
   (`169.254.0.0/16`) ranges unless explicitly opted out (`--allow-lan`).
-  Opting out should be a deliberate, reviewed decision — see
+  Opting out opens the whole LAN — every private address, on any port, on
+  both backends — not just allowlisted hosts on it, so it should be a
+  deliberate, reviewed decision — see
   [Distributing Profiles Org-Wide](distributing-profiles.md).
 - **Internet egress is default-deny with an explicit allowlist.** A sandbox
-  can only reach domains listed in `--allow`/a profile's `allow` entries;
+  can only reach domains listed in `--allow`/a profile's `allow` entries
+  (or added by an allow preset, an allow file, or `--agent`);
   everything else is rejected.
-- **Domain-based allow rules are IP snapshots, not DNS-aware filtering.**
-  Incus (and any IP-based ACL mechanism) can only match on resolved IP
-  addresses, not domain names. `agentctl` resolves each allowed domain at
-  policy-apply time; if the target rotates IPs (common behind a CDN), the
-  rule goes stale until the policy is re-applied. A DNS-filtering proxy that
-  stays dynamically in sync is a possible future improvement, not built now.
+- **How domain-based allow rules are matched depends on the backend.**
+  - *Incus*: its ACLs (like any IP-based mechanism) can only match resolved
+    IP addresses, not domain names. `agentctl` resolves each allowed domain
+    at policy-apply time; if the target rotates IPs (common behind a CDN),
+    the rule goes stale until the policy is re-applied, and anything else
+    served from an allowlisted IP is reachable too.
+  - *Lima*: egress goes through a per-instance filtering proxy (see
+    [Lima's network enforcement](#lima-network-enforcement-host-side-without-an-acl-object)),
+    which matches the hostname the client asked for and resolves it at
+    connection time — no staleness, and `*.example.com` really covers every
+    subdomain. The flip side: only clients that use the proxy get out at
+    all.
+- **DNS is the one egress outside the allowlist, and it differs by
+  backend.** On Incus, DNS to any server on port 53 is allowed by default
+  (narrowable or removable with a profile's `network.dns`). On Lima, the
+  guest has no DNS egress of its own: names are resolved by the Mac's own
+  resolver through Lima's, and `network.dns` is refused because agentctl
+  can't narrow that path. Either way, a resolver that recurses for the
+  sandbox can carry data out in query names — see the DNS section of the
+  [Profile Schema](../reference/profile-schema.md#dns).
+- **Neither backend inspects TLS.** Filtering is by destination (address or
+  requested hostname), so domain fronting through a CDN shared with an
+  allowlisted domain isn't prevented on either.
+
+## Lima network enforcement: host-side without an ACL object
+
+Lima has no per-instance ACL to put this policy in, and a host `pf` rule on
+the VM's network interface would be bypassable: Lima always gives the guest
+a user-mode NIC whose traffic the hostagent process re-creates as ordinary
+connections *from the host*, invisible to `pf` as guest traffic — a guest
+with root could just route around such a filter. So agentctl puts the
+enforcement on that process instead: `limactl start` (and with it the
+hostagent) runs under a macOS sandbox profile that refuses every outbound
+connection except to the instance's own egress proxy and SSH forward on the
+host's loopback, and the proxy applies the allowlist and deny-LAN rules.
+None of it runs inside the guest, so root in the guest doesn't help; and
+agentctl checks after every start that a direct connection out from the
+guest fails, stopping the instance if it doesn't. Details and trade-offs:
+[Lima setup](providers/lima-setup.md#network-policy-enforcement).
+
+The one way around it is not starting the instance through agentctl: a
+plain `limactl start`, or launchd via `limactl autostart`, runs the
+instance with unrestricted egress. agentctl refuses to start an instance
+registered with launchd and refuses to adopt a running instance it didn't
+start, but treat starting agentctl's Lima instances by other means as
+switching their network policy off.
 
 ## Host filesystem access is opt-in and named
 
@@ -92,20 +135,42 @@ required install/runtime domains into the instance's egress allowlist
 before applying network policy — the same default-deny-with-explicit-allow
 mechanism `--allow` already uses, not a separate or looser path. This is a
 deliberate, visible widening tied to the specific agent you asked for
-(e.g. `--agent=claude` allows `claude.ai` and `*.anthropic.com`), not a
+(e.g. `--agent=claude` allows `claude.ai`, `downloads.claude.ai`,
+`platform.claude.com` and `api.anthropic.com`), not a
 silent one: `agentctl status`/`profile show`-style introspection of the
 resulting policy shows exactly what was added, same as any other `--allow`
-entry. Two multi-provider agents (`opencode`, `pi`) are documented as only
-guaranteeing their install domain (plus, for `pi`, its default-provider
-runtime domain) — extending the allowlist further for a different model
-provider is on you, the same as it would be without `--agent`. `cursor` is
-partial for a different reason: its vendor spreads runtime traffic across
-more hosts than the entry lists, so the same "extend it yourself" caveat
-applies. Note also that `--agent=gemini` widens the allowlist to include
-`registry.npmjs.org`, since Gemini CLI installs from npm rather than a
-vendor-hosted script — a package registry is a broader grant than a single
-vendor domain, and worth weighing if your threat model cares about what an
-agent can pull in at install time.
+entry. The full per-agent lists are in
+[Agent Provisioning](../user/agent-provisioning.md#built-in-registry). Note
+that some are broad: `--agent=opencode` allows `github.com`, because that's
+where opencode's releases are downloaded from, and with it everything else
+on GitHub; `--agent=gemini` and `--agent=pi` allow `registry.npmjs.org`,
+since both install from npm — a package registry is a broader grant than a
+single vendor domain, and worth weighing if your threat model cares about
+what an agent can pull in at install time. Two multi-provider agents
+(`opencode`, `pi`) are documented as only guaranteeing their install (plus,
+for `pi`, its default provider) — extending the allowlist further for a
+different model provider is on you, the same as it would be without
+`--agent`. `cursor` is partial for a different reason: its vendor spreads
+runtime traffic across more hosts than the entry lists, so the same
+"extend it yourself" caveat applies.
+
+## Presets and allow files are allowlist entries too
+
+`--allow-preset`/`allowPresets` (named groups of package-source and git
+hosts, e.g. `apt`, `pypi`, `github`) and `--allow-file`/`allowFile` expand
+to ordinary allow rules — they're conveniences for writing an allowlist,
+not a different enforcement path. Two things to keep in mind when
+approving one:
+
+- **A preset opens whole hosts, both directions.** Filtering is by host
+  and port, never by URL path or by what's sent, so the `github` preset
+  lets the sandbox *push* to any GitHub repository it has credentials for,
+  not just clone public ones; `pypi`/`npm` allow uploads to those
+  registries if the sandbox holds a publishing token. Treat any
+  allowlisted host that accepts writes as a possible exfiltration channel.
+- **`agentctl profile presets` prints exactly what each preset expands
+  to**, and `profile show` prints a profile's allow file already merged
+  in — review those, not just the preset names, when vetting a profile.
 
 ## Why raw X11 forwarding is excluded
 
@@ -123,12 +188,12 @@ does instead per provider.
 about what it can and can't yet enforce per backend — see the
 [capability matrix](capability-matrix.md). Hyper-V is still a stub this
 milestone; treat any claim of protection on that platform as not yet real
-until its capability entries say `Supported`. Lima's lifecycle operations
-(create/start/stop/exec/shell/...) are real, but its network-isolation
-guarantees are not: `network.acl` and `network.deny-lan` are both
-`ManualWorkaround` there (Lima has no native ACL primitive), so treat any
-claim of egress protection on Lima as not yet automatic either, until those
-two entries say `Supported`.
+until its capability entries say `Supported`. On Lima, `network.acl` and
+`network.deny-lan` are `Supported` on macOS hosts (see
+[above](#lima-network-enforcement-host-side-without-an-acl-object) for the
+mechanism and its one bypass: starting an instance outside agentctl), and
+`Not available` on Linux hosts, where agentctl can't confine Lima's
+processes — use Incus there.
 
 ## Observability is explicitly postponed
 

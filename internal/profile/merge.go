@@ -12,22 +12,24 @@ package profile
 //   - Network.Allow, Network.Ports, Mounts: additive union (override
 //     entries are appended after base's, duplicates are the caller's
 //     problem to avoid via Validate)
-//   - Packages: additive union, deduped
+//   - Network.AllowPresets, Packages: additive union, deduped
 //   - Network.DenyLAN: override's value is taken as-is (the CLI layer is
 //     responsible for resolving --deny-lan/--allow-lan against the
 //     profile's value before constructing override)
 //   - Resources, Console.Viewer: override's value wins whenever it is
 //     non-zero/non-empty, otherwise base's value is kept
 //   - MountPolicy: narrow-only, see mergeMountPolicy
+//
+// Network.AllowFile plays no part: loading the profile or spec that names
+// an allow file already turned its entries into Allow rules (see
+// NetworkPolicy.ExpandAllowFile).
 func Merge(base, override Policy) Policy {
 	out := base
 
 	out.Network.DenyLAN = override.Network.DenyLAN
 	out.Network.Allow = append(append([]AllowRule(nil), base.Network.Allow...), override.Network.Allow...)
+	out.Network.AllowPresets = dedupe(append(append([]string(nil), base.Network.AllowPresets...), override.Network.AllowPresets...))
 	out.Network.Ports = append(append([]PortPublish(nil), base.Network.Ports...), override.Network.Ports...)
-	if override.Network.AllowFile != "" {
-		out.Network.AllowFile = override.Network.AllowFile
-	}
 
 	// DNS narrows only, like mountPolicy: an override that names servers
 	// replaces a broader base (empty means "any destination", so naming
