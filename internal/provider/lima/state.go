@@ -36,6 +36,10 @@ type instanceState struct {
 	// ConfinedHostAgentPID is the hostagent agentctl last started under its
 	// network sandbox, while it's running.
 	ConfinedHostAgentPID int `yaml:"confinedHostAgentPID,omitempty"`
+	// Unrestricted records `create --no-network-policy`: this instance
+	// boots without the network sandbox and egress proxy. Only an explicit
+	// true here does that — a missing or unreadable entry means confined.
+	Unrestricted bool `yaml:"unrestricted,omitempty"`
 }
 
 // stateFile is the on-disk shape of lima-state.yaml.
@@ -143,6 +147,17 @@ func pendingAgentInstall(name string) (string, error) {
 }
 
 // updateInstanceState applies fn to name's entry and saves the result.
+// instanceUnrestricted reports whether name was created with
+// --no-network-policy. Any error reading the state counts as no: failing
+// closed means starting confined.
+func instanceUnrestricted(name string) bool {
+	s, err := loadState()
+	if err != nil {
+		return false
+	}
+	return s.Instances[name].Unrestricted
+}
+
 func updateInstanceState(name string, fn func(*instanceState)) error {
 	s, err := loadState()
 	if err != nil {

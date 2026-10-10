@@ -211,6 +211,13 @@ Merging is narrow-only, like `mountPolicy`: an override that names servers
 replaces a broader base, and `disabled` is OR'd so the most restrictive layer
 in the chain wins.
 
+All of this is the Incus backend's. A Lima guest has no DNS egress of its
+own — its queries are answered by Lima's host resolver, i.e. the Mac's own
+DNS settings — so there is nothing for `servers` or `disabled` to narrow, and
+agentctl can't switch that resolver off. A profile or spec that sets either
+is refused at `create` on Lima rather than silently not applied; see
+[Lima setup](../admin/providers/lima-setup.md#what-this-means-in-practice).
+
 There is deliberately **no profile field for disabling network policy
 wholesale**. The `--no-network-policy` escape hatch is a per-invocation CLI
 flag only, so a distributed profile can't quietly turn enforcement off for

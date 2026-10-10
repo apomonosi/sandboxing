@@ -915,3 +915,103 @@ func mustState(t *testing.T, name string) instanceState {
 	}
 	return s.Instances[name]
 }
+
+// TestUnrestricted_StartsWithoutTheSandbox covers `create
+// --no-network-policy`: the Lima counterpart of Incus attaching no ACL is
+// a plain `limactl start` — no sandbox, no proxy, no policy file — and the
+// preview has to say the same.
+func TestUnrestricted_StartsWithoutTheSandbox(t *testing.T) {
+	fl := newFakeLima()
+	p, fp := newTestProvider(t, fl, true)
+	ctx := context.Background()
+
+	spec := provider.InstanceSpec{Name: "demo", Image: "template://ubuntu-lts", Overrides: provider.NetworkPolicy{
+		DenyLAN:      true,
+		Allow:        []provider.AllowRule{{Domain: "example.com", Ports: []int{443}}},
+		Unrestricted: true,
+	}}
+	if _, err := p.Create(ctx, spec); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !mustState(t, "demo").Unrestricted {
+		t.Fatal("Create didn't record the instance as unrestricted")
+	}
+	paths, _ := egressPathsFor("demo")
+	if _, err := os.Stat(paths.Policy); !os.IsNotExist(err) {
+		t.Errorf("an unrestricted instance has a policy file (stat err %v)", err)
+	}
+
+	preview := p.PreviewStart("demo")
+	if want := []provider.Command{cmd(buildStartArgs("demo"))}; !reflect.DeepEqual(preview, want) {
+		t.Errorf("PreviewStart = %v, want %v", preview, want)
+	}
+	fl.calls = nil
+	if err := p.Start(ctx, "demo"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got, want := fl.verbs(), []string{"limactl start"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Start ran %v, want just %v", got, want)
+	}
+	if len(fp.starts) != 0 {
+		t.Errorf("Start launched an egress proxy for an unrestricted instance: %+v", fp.starts)
+	}
+}
+
+// TestApplyNetworkPolicy_EnforcingClearsUnrestricted: a later enforced
+// policy puts the instance back under the sandbox on its next start.
+func TestApplyNetworkPolicy_EnforcingClearsUnrestricted(t *testing.T) {
+	fl := newFakeLima()
+	p, _ := newTestProvider(t, fl, true)
+	ctx := context.Background()
+
+	if err := p.ApplyNetworkPolicy(ctx, "demo", provider.NetworkPolicy{Unrestricted: true}); err != nil {
+		t.Fatalf("ApplyNetworkPolicy(unrestricted): %v", err)
+	}
+	if err := p.ApplyNetworkPolicy(ctx, "demo", provider.NetworkPolicy{DenyLAN: true}); err != nil {
+		t.Fatalf("ApplyNetworkPolicy(enforced): %v", err)
+	}
+	if mustState(t, "demo").Unrestricted {
+		t.Fatal("instance still unrestricted after an enforced policy was applied")
+	}
+	if err := p.Start(ctx, "demo"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(fl.callsTo(sandboxExecBinary)) != 1 {
+		t.Errorf("Start didn't run confined: %v", fl.verbs())
+	}
+}
+
+// TestDNSPolicy_RefusedOnLima: a confined guest's DNS always goes through
+// Lima's host resolver, so DNS settings that would narrow or remove it
+// can't be honored — and must fail before anything is created rather than
+// be silently ignored.
+func TestDNSPolicy_RefusedOnLima(t *testing.T) {
+	for name, dns := range map[string]provider.DNSPolicy{
+		"servers":  {Servers: []string{"10.0.0.53"}},
+		"disabled": {Disabled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fl := newFakeLima()
+			p, _ := newTestProvider(t, fl, true)
+			ctx := context.Background()
+
+			_, err := p.Create(ctx, provider.InstanceSpec{Name: "demo", Image: "template://ubuntu-lts",
+				Overrides: provider.NetworkPolicy{DenyLAN: true, DNS: dns}})
+			if err == nil || !strings.Contains(err.Error(), "network.dns") {
+				t.Fatalf("Create err = %v, want a network.dns refusal", err)
+			}
+			if len(fl.calls) != 0 {
+				t.Errorf("Create ran %v before refusing", fl.verbs())
+			}
+			if err := p.ApplyNetworkPolicy(ctx, "demo", provider.NetworkPolicy{DNS: dns}); err == nil {
+				t.Error("ApplyNetworkPolicy accepted a DNS policy it can't enforce")
+			}
+
+			// --no-network-policy enforces nothing, so there's nothing to refuse.
+			if _, err := p.Create(ctx, provider.InstanceSpec{Name: "demo", Image: "template://ubuntu-lts",
+				Overrides: provider.NetworkPolicy{DNS: dns, Unrestricted: true}}); err != nil {
+				t.Errorf("Create(unrestricted) err = %v, want nil", err)
+			}
+		})
+	}
+}

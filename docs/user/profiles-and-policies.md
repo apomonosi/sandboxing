@@ -77,14 +77,16 @@ example above).
   `*.example.com` covers every subdomain. On Incus, allow rules become IP
   addresses, and only the wildcard's apex (`example.com`) is resolved, so
   list the subdomains you need by name if you use Incus or want a profile
-  to work on both.
-- **Internal hosts need `--allow-lan`.** Deny-LAN refuses private
+  to work on both. agentctl's own presets, agent lists and built-in
+  profiles do exactly that, and never use wildcards.
+- **Internal hosts mean opening the LAN.** Deny-LAN refuses private
   (RFC1918/link-local) addresses even when they're on the allowlist, so a
   self-hosted GitLab or package mirror at a `10.x.x.x` address stays
-  unreachable until you create the instance with `--allow-lan` (or
-  `denyLAN: false`). Egress stays default-deny either way: the sandbox can
-  then reach the internal hosts you allowlisted, not the rest of your
-  network.
+  unreachable unless you create the instance with `--allow-lan` (or
+  `denyLAN: false`). Know what that opens: `--allow-lan` makes your
+  *whole* LAN reachable on any port — every private address, on both
+  backends — not just the internal host you had in mind. Internet egress
+  stays default-deny either way.
 
 ## Allowing package sources and git hosts
 
@@ -134,7 +136,8 @@ don't cover:
   `*.pkg.github.com`) are served from other hosts too.
 - **Self-hosted servers.** For your own GitLab, Gitea, Artifactory or
   Nexus, allow the host itself — `--allow=https://gitlab.example.com` —
-  plus `--allow-lan` if it has a private address (see above).
+  plus `--allow-lan` if it has a private address (see above for what
+  that opens).
 
 Allowing a host allows everything on it, uploads included — the `github`
 preset lets the sandbox push to any repository it has credentials for. See

@@ -110,6 +110,20 @@ func egressPathsFor(name string) (egressPaths, error) {
 	}, nil
 }
 
+// checkDNSPolicy refuses DNS settings this backend can't enforce, rather
+// than quietly resolving anyway (a looser policy than the one asked for).
+// A confined guest has no DNS egress of its own: its queries are answered
+// by Lima's host resolver — the Mac's own DNS configuration — inside the
+// hostagent, and the sandbox profile can only allow loopback or every
+// address, never a list of servers. So DNS can be neither narrowed to
+// named servers nor switched off from here.
+func checkDNSPolicy(dns provider.DNSPolicy) error {
+	if len(dns.Servers) > 0 || dns.Disabled {
+		return errors.New("network.dns (servers/disabled) isn't supported on the Lima backend: a Lima guest resolves names through Lima's host resolver, which uses the Mac's own DNS settings, and agentctl can't narrow or turn that off. Remove network.dns from the profile or spec, or use the Incus backend")
+	}
+	return nil
+}
+
 func toEgressPolicy(np provider.NetworkPolicy) egress.Policy {
 	pol := egress.Policy{DenyLAN: np.DenyLAN, Allow: make([]egress.AllowRule, len(np.Allow))}
 	for i, r := range np.Allow {

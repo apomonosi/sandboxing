@@ -97,6 +97,12 @@ func (p *Provider) run(ctx context.Context, args ...string) ([]byte, []byte, err
 // egress proxy enforces from the first start on (see network.go) — the
 // same point at which Incus's Create applies its ACL.
 func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*provider.Instance, error) {
+	// Refuse a policy this backend can't enforce before creating anything.
+	if p.confine && !spec.Overrides.Unrestricted {
+		if err := checkDNSPolicy(spec.Overrides.DNS); err != nil {
+			return nil, err
+		}
+	}
 	if _, _, err := p.run(ctx, buildCreateArgs(spec)...); err != nil {
 		return nil, err
 	}
@@ -110,9 +116,10 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 
 // Start boots the instance. On macOS that means booting it confined, with
 // its egress limited to what its network policy allows (startConfined in
-// network.go); elsewhere it's a plain `limactl start`.
+// network.go) — unless it was created with --no-network-policy. Otherwise
+// it's a plain `limactl start`.
 func (p *Provider) Start(ctx context.Context, name string) error {
-	if p.confine {
+	if p.confine && !instanceUnrestricted(name) {
 		return p.startConfined(ctx, name)
 	}
 	_, _, err := p.run(ctx, buildStartArgs(name)...)
@@ -277,9 +284,37 @@ func (p *Provider) View(ctx context.Context, name string, opts provider.ViewOpti
 // macOS; see network.go). The instance's egress proxy enforces it from its
 // next new connection on — there are no backend commands to run, and the
 // policy file is re-read whenever it changes.
+//
+// An Unrestricted policy (--no-network-policy) is recorded instead, so
+// Start boots the instance the way a plain `limactl start` would: no
+// sandbox, no proxy, the backend's own default connectivity — the Lima
+// counterpart of Incus attaching no ACL.
 func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy provider.NetworkPolicy) error {
+	if policy.Unrestricted {
+		if !p.confine {
+			return nil // nothing is enforced here to begin with
+		}
+		if err := updateInstanceState(name, func(st *instanceState) { st.Unrestricted = true }); err != nil {
+			return err
+		}
+		if paths, err := egressPathsFor(name); err == nil {
+			_ = os.Remove(paths.Policy)
+		}
+		return nil
+	}
 	if !p.confine {
 		return p.err(provider.FeatureNetworkACL)
+	}
+	if err := checkDNSPolicy(policy.DNS); err != nil {
+		return err
+	}
+	// Confined first, then the policy: if writing the policy fails, the
+	// proxy finds none and denies everything rather than the instance
+	// staying unrestricted.
+	if instanceUnrestricted(name) {
+		if err := updateInstanceState(name, func(st *instanceState) { st.Unrestricted = false }); err != nil {
+			return err
+		}
 	}
 	paths, err := egressPathsFor(name)
 	if err != nil {

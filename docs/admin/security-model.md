@@ -28,7 +28,9 @@ independently capability-gated concern (`ApplyNetworkPolicy` is its own
 - **`--deny-lan` defaults to on.** Every sandbox blocks egress to
   RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and link-local
   (`169.254.0.0/16`) ranges unless explicitly opted out (`--allow-lan`).
-  Opting out should be a deliberate, reviewed decision — see
+  Opting out opens the whole LAN — every private address, on any port, on
+  both backends — not just allowlisted hosts on it, so it should be a
+  deliberate, reviewed decision — see
   [Distributing Profiles Org-Wide](distributing-profiles.md).
 - **Internet egress is default-deny with an explicit allowlist.** A sandbox
   can only reach domains listed in `--allow`/a profile's `allow` entries
@@ -46,6 +48,14 @@ independently capability-gated concern (`ApplyNetworkPolicy` is its own
     connection time — no staleness, and `*.example.com` really covers every
     subdomain. The flip side: only clients that use the proxy get out at
     all.
+- **DNS is the one egress outside the allowlist, and it differs by
+  backend.** On Incus, DNS to any server on port 53 is allowed by default
+  (narrowable or removable with a profile's `network.dns`). On Lima, the
+  guest has no DNS egress of its own: names are resolved by the Mac's own
+  resolver through Lima's, and `network.dns` is refused because agentctl
+  can't narrow that path. Either way, a resolver that recurses for the
+  sandbox can carry data out in query names — see the DNS section of the
+  [Profile Schema](../reference/profile-schema.md#dns).
 - **Neither backend inspects TLS.** Filtering is by destination (address or
   requested hostname), so domain fronting through a CDN shared with an
   allowlisted domain isn't prevented on either.

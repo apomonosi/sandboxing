@@ -83,12 +83,14 @@ all of the guest's traffic, and that's where agentctl enforces policy:
    agentctl itself, re-run as a hidden `agentctl egress-proxy` command).
    The guest is pointed at it through `http_proxy`/`https_proxy` in its
    `/etc/environment`, and reaches it at `192.168.5.2` (Lima's address
-   for the host). The proxy enforces exactly the Incus semantics:
-   everything not on the allowlist is refused, and with `--deny-lan` (the
-   default) a destination in `10.0.0.0/8`, `172.16.0.0/12`,
+   for the host). The proxy enforces the same semantics as the Incus
+   ACL: everything not on the allowlist is refused; with `--deny-lan`
+   (the default) a destination in `10.0.0.0/8`, `172.16.0.0/12`,
    `192.168.0.0/16`, `169.254.0.0/16` (or their IPv6 counterparts) is
-   refused *even if* an allow rule matches it. Destinations on the Mac
-   itself (loopback) are always refused.
+   refused *even if* an allow rule matches it; and with `--allow-lan`
+   those ranges are reachable on any port whether or not an allow rule
+   names them. Destinations on the Mac itself (loopback) are always
+   refused.
 3. **Every start is checked.** Before booting, agentctl re-applies the
    instance settings this depends on (no extra network interfaces, the
    pinned SSH port, the proxy environment) with `limactl edit`, then reads
@@ -119,14 +121,26 @@ and the in-guest check.
 - **Allow rules match hostnames, at connection time.** Incus resolves
   allowlisted domains to IP addresses once, when the policy is applied;
   the Lima proxy checks the hostname the client asked for and resolves it
-  on every connection. So `*.anthropic.com` covers every subdomain (not
-  just whatever the apex resolved to), CDN address changes don't make a
-  rule go stale, and a hostname that shares an IP with an allowlisted one
-  isn't let through by accident. A connection by bare IP address is only
-  allowed if that IP itself is on the allowlist.
-- **DNS works as usual.** The guest's DNS queries are answered by Lima
-  through macOS's own resolver, as on Incus, where the guest's DNS goes to
-  the bridge's resolver.
+  on every connection. So a `*.example.com` rule you write covers every
+  subdomain (not just whatever the apex resolved to), CDN address changes
+  don't make a rule go stale, and a hostname that shares an IP with an
+  allowlisted one isn't let through by accident. A connection by bare IP
+  address is only allowed if that IP itself is on the allowlist. (The
+  built-in agent lists, presets and profiles never use wildcards, so they
+  allow the same hosts here as on Incus.)
+- **DNS goes through the Mac's resolver, and only there.** The guest's DNS
+  queries are answered by Lima's host resolver, i.e. macOS's own DNS
+  settings; the guest can't send DNS to any other server. That's
+  narrower than Incus's default (DNS to any server on port 53), and it's
+  also why a profile's `network.dns` (`servers` or `disabled`) is
+  refused on this backend: agentctl can't narrow or switch off that path,
+  so `create` fails with an error rather than quietly ignoring the
+  setting.
+- **`--no-network-policy` means a plain `limactl start`.** An instance
+  created with it boots without the sandbox or the egress proxy —
+  unrestricted egress, the counterpart of Incus attaching no ACL. The
+  choice is recorded at create time, and `--preview start` shows the
+  plain start.
 - **The Mac's own services are off-limits.** A stock Lima guest can reach
   anything listening on the Mac's loopback interface (databases, dev
   servers) at `192.168.5.2`; under agentctl it can only reach its own
@@ -157,16 +171,17 @@ and the in-guest check.
   if `~/.lima/_config/default.yaml` or `override.yaml` adds one back.
 - No *writable* mount covering agentctl's state directory
   (`~/.config/agentctl`), where each instance's egress policy lives — a
-  guest that could write there could rewrite its own allowlist. Lima's
-  templates share your home directory read-only by default, which is fine;
-  agentctl refuses to start an instance whose mounts would make it
-  writable.
+  guest that could write there could rewrite its own allowlist. agentctl
+  replaces a template's own mounts with the ones you asked for, and
+  refuses to start an instance whose effective mounts (including any
+  `~/.lima/_config` adds) would make that directory writable.
 
 ## Known gaps versus Incus
 
 | Gap | Detail |
 |---|---|
 | Egress needs proxy-aware clients | See [What this means in practice](#what-this-means-in-practice): traffic that doesn't use the instance's HTTP proxy is refused rather than filtered. |
+| No `network.dns` policy | A guest's DNS always goes through Lima's host resolver (the Mac's own DNS settings); `servers` and `disabled` can't be enforced, so a profile that sets them is refused at `create`. |
 | Snapshot support experimental | `limactl snapshot` is explicitly marked experimental/unstable upstream; `agentctl` won't build on it until it stabilizes (`NotAvailable`, not `UnderDevelopment`). |
 | No local image store | Lima resolves a template's base image lazily, per-instance, inside `create`/`start` itself — there's no separate named store to pull into ahead of time the way `incus image copy` gives you, so `image.pull` is `NotAvailable` rather than `Supported`. |
 | No first-class GUI console | Lima has historically targeted headless Linux VM use cases. `agentctl` plans a dedicated VNC bridge for `view`, not X11 forwarding — see [Viewing a Sandbox](../../user/view-and-console.md). |

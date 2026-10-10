@@ -66,7 +66,9 @@ Lima has no ACL object: agentctl enforces the same policy host-side by
 confining Lima's own processes with a macOS sandbox profile and routing the
 guest's egress through a per-instance filtering proxy — see
 [Lima setup](providers/lima-setup.md#network-policy-enforcement) for how,
-and for the one practical difference (clients must use the proxy). That
+and for the practical differences: clients must use the proxy, and a
+profile's `network.dns` settings are refused, since a Lima guest's DNS
+always goes through the Mac's own resolver. That
 mechanism is macOS-specific, so on a Linux host the Lima backend reports
 both as **Not available** (use Incus there). Lima's logs.network is `Under
 development` rather than a gap: each instance's proxy already logs every

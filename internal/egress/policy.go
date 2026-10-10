@@ -16,10 +16,14 @@ import (
 // same meaning:
 //
 //   - Default deny: a destination is reachable only if an Allow rule
-//     matches its hostname (or IP literal) and port.
-//   - DenyLAN: LAN/link-local destinations are refused even when an allow
-//     rule matches them, the same way Incus evaluates reject rules before
-//     allow rules.
+//     matches its hostname (or IP literal) and port — or, with DenyLAN
+//     off, if it's on the LAN.
+//   - DenyLAN on: LAN/link-local destinations are refused even when an
+//     allow rule matches them, the way Incus drops an allow rule's LAN
+//     addresses under --deny-lan.
+//   - DenyLAN off (--allow-lan): LAN/link-local destinations are
+//     reachable on any port whether or not an allow rule names them, the
+//     way Incus adds explicit allow rules for the private ranges.
 //
 // On top of that, loopback, unspecified, multicast, and broadcast
 // destinations are refused unconditionally: the proxy runs on the host, so
@@ -134,16 +138,31 @@ func portAllowed(ports []int, port int) bool {
 	return false
 }
 
+// canonicalIP returns ip in the form the range checks expect: IPv4 in its
+// 4-byte form, and an address under the NAT64 prefix as the IPv4 address
+// it embeds.
+func canonicalIP(ip net.IP) net.IP {
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	if nat64Prefix.Contains(ip) {
+		return net.IPv4(ip[12], ip[13], ip[14], ip[15]).To4()
+	}
+	return ip
+}
+
+// isLAN reports whether ip is in one of the LAN/link-local ranges that
+// deny-LAN refuses and allow-LAN opens.
+func isLAN(ip net.IP) bool {
+	return inAny(canonicalIP(ip), lanNetworks)
+}
+
 // blockedReason returns why ip must not be dialed under p, or "" if it
 // may be. It's applied to every address a hostname resolves to, at
 // connection time, so a name that later starts resolving into the LAN
 // (DNS rebinding) is refused too.
 func (p Policy) blockedReason(ip net.IP) string {
-	if v4 := ip.To4(); v4 != nil {
-		ip = v4
-	} else if nat64Prefix.Contains(ip) {
-		ip = net.IPv4(ip[12], ip[13], ip[14], ip[15]).To4()
-	}
+	ip = canonicalIP(ip)
 	switch {
 	case ip.IsLoopback():
 		return "loopback address (would reach the host itself)"

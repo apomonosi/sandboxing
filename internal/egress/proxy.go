@@ -135,7 +135,11 @@ func (p *Proxy) dialAllowed(ctx context.Context, kind, host, port string) (net.C
 		return nil, p.deny(kind, target, "empty host")
 	}
 	pol := p.currentPolicy()
-	if !pol.permits(h, portNum) {
+	// With deny-LAN off, the LAN is open whether or not an allow rule names
+	// the destination (see Policy), so a name the allowlist doesn't cover
+	// still gets resolved — and only its LAN addresses are dialed.
+	listed := pol.permits(h, portNum)
+	if !listed && pol.DenyLAN {
 		return nil, p.deny(kind, target, "not in the allowlist")
 	}
 
@@ -155,9 +159,16 @@ func (p *Proxy) dialAllowed(ctx context.Context, kind, host, port string) (net.C
 
 	var candidates []net.IP
 	reason := "resolved to no addresses"
+	if !listed {
+		reason = "not in the allowlist"
+	}
 	for _, ip := range ips {
 		if r := pol.blockedReason(ip); r != "" {
 			reason = fmt.Sprintf("%s is a %s", ip, r)
+			continue
+		}
+		if !listed && !isLAN(ip) {
+			reason = "not in the allowlist"
 			continue
 		}
 		candidates = append(candidates, ip)

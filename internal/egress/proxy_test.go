@@ -252,22 +252,33 @@ func TestProxy_DenyLAN_SkipsLANAddressesOfAnAllowedName(t *testing.T) {
 	}
 }
 
-// TestProxy_AllowLAN_OnlyExplicitlyAllowedLANHosts: with deny-LAN off, a
-// LAN destination is reachable only if allowlisted — still default-deny,
-// the same as Incus with --allow-lan.
-func TestProxy_AllowLAN_OnlyExplicitlyAllowedLANHosts(t *testing.T) {
-	f := newProxyFixture(t, allowPolicy(false,
-		AllowRule{Domain: "onlylan.example", Ports: []int{443}},
-		AllowRule{Domain: "loop.example", Ports: []int{443}},
-	))
-	if resp, _, _ := f.connect(t, "onlylan.example:443"); resp.StatusCode != http.StatusOK {
-		t.Errorf("allowlisted LAN host with deny-LAN off: status = %d, want 200", resp.StatusCode)
+// TestProxy_AllowLAN_OpensTheLANOnly: with deny-LAN off, LAN destinations
+// are reachable whether or not an allow rule names them — the same as
+// Incus, where --allow-lan adds allow rules for the private ranges — while
+// everything off the LAN stays default-deny and the host's loopback stays
+// refused.
+func TestProxy_AllowLAN_OpensTheLANOnly(t *testing.T) {
+	f := newProxyFixture(t, allowPolicy(false, AllowRule{Domain: "loop.example", Ports: []int{443}}))
+
+	for _, target := range []string{"onlylan.example:443", "10.0.0.5:443"} {
+		if resp, _, _ := f.connect(t, target); resp.StatusCode != http.StatusOK {
+			t.Errorf("LAN destination %s with deny-LAN off: status = %d, want 200", target, resp.StatusCode)
+		}
 	}
-	if resp, _, _ := f.connect(t, "10.0.0.5:443"); resp.StatusCode != http.StatusForbidden {
-		t.Errorf("non-allowlisted LAN address with deny-LAN off: status = %d, want 403", resp.StatusCode)
+	// lan.example resolves to a LAN and a public address; only the LAN one
+	// may be used, since nothing allowlists the name.
+	if resp, _, _ := f.connect(t, "lan.example:443"); resp.StatusCode != http.StatusOK {
+		t.Errorf("lan.example with deny-LAN off: status = %d, want 200 via its LAN address", resp.StatusCode)
 	}
-	if resp, _, _ := f.connect(t, "loop.example:443"); resp.StatusCode != http.StatusForbidden {
-		t.Errorf("loopback stays refused even with deny-LAN off: status = %d, want 403", resp.StatusCode)
+	for _, target := range []string{"echo.example:443", "203.0.113.10:443", "loop.example:443", "127.0.0.1:443"} {
+		if resp, _, _ := f.connect(t, target); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s with deny-LAN off: status = %d, want 403", target, resp.StatusCode)
+		}
+	}
+	for _, d := range f.net.dialedAddrs() {
+		if !strings.HasPrefix(d, "10.") && !strings.HasPrefix(d, "192.168.") {
+			t.Errorf("dialed %s, which isn't on the LAN and isn't allowlisted", d)
+		}
 	}
 }
 

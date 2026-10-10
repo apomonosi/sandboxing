@@ -45,7 +45,7 @@ func (p *Provider) PreviewCreate(spec provider.InstanceSpec) []provider.Command 
 // in, or no free loopback ports), it returns nothing rather than a
 // sequence that isn't what would run — Start itself fails the same way.
 func (p *Provider) PreviewStart(name string) []provider.Command {
-	if !p.confine {
+	if !p.confine || instanceUnrestricted(name) {
 		return []provider.Command{cmd(buildStartArgs(name))}
 	}
 	plan, err := p.planStart(name, false)
