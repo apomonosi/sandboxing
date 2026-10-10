@@ -29,6 +29,7 @@ func TestBuildCreateArgs_Full(t *testing.T) {
 		"--set", `with(select(.os != "Darwin"); .user.passwordlessSudo = true)`,
 		"--set", `.ssh.forwardAgent = false`,
 		"--set", `.ssh.forwardX11 = false`,
+		"--set", `.copyToHost = []`,
 		"--set", `.mounts = []`,
 		"--set", `.mounts += [{"location": "/host/ws", "mountPoint": "/workspace", "writable": false}]`,
 		"--set", `.portForwards += [{"guestPort": 80, "hostPort": 8080, "proto": "tcp"}]`,
@@ -79,6 +80,17 @@ func TestBuildSetExpressions_ForwardingAlwaysOff(t *testing.T) {
 		if !containsExpr(got, want) {
 			t.Errorf("buildSetExpressions() = %v, want it to include %q", got, want)
 		}
+	}
+}
+
+// TestBuildSetExpressions_ClearsCopyToHost: Lima's Kubernetes templates
+// have it copy a kubeconfig out of the guest for the host's kubectl, and
+// the guest decides what that file says. Like the template's mounts, that
+// mustn't come along into a sandbox, even a bare one.
+func TestBuildSetExpressions_ClearsCopyToHost(t *testing.T) {
+	got := buildSetExpressions(provider.InstanceSpec{})
+	if !containsExpr(got, ".copyToHost = []") {
+		t.Errorf("buildSetExpressions() = %v, want it to include %q", got, ".copyToHost = []")
 	}
 }
 

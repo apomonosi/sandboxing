@@ -72,8 +72,8 @@ func buildEditArgs(name, expr string) []string {
 
 // buildSetExpressions returns one yq expression per structured
 // InstanceSpec field, in a fixed order for deterministic output/testing:
-// resources, forced user identity, forced-off SSH forwarding, mounts, port
-// forwards.
+// resources, forced user identity, forced-off SSH forwarding, cleared
+// copyToHost, mounts, port forwards.
 //
 // spec.Profiles is deliberately not translated to anything: by the time
 // Provider.Create receives spec, internal/cli/create.go has already fully
@@ -122,6 +122,14 @@ func buildSetExpressions(spec provider.InstanceSpec) []string {
 	// only applies to fields the instance leaves unset. override.yaml
 	// still beats this; Start refuses that instead (see checkForwarding).
 	exprs = append(exprs, ".ssh.forwardAgent = false", ".ssh.forwardX11 = false")
+
+	// Cleared, the way buildMountExpressions clears the template's mounts:
+	// copyToHost has Lima copy guest files, whose contents the guest
+	// controls, to host paths, and Lima's own Kubernetes templates use it
+	// to copy out a kubeconfig for the host's kubectl. Entries Lima merges
+	// in from default.yaml and override.yaml survive this; Start refuses
+	// those (see checkHostChannels).
+	exprs = append(exprs, ".copyToHost = []")
 
 	exprs = append(exprs, buildMountExpressions(spec.Mounts)...)
 

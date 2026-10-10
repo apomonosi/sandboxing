@@ -119,8 +119,10 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 // network.go) — unless it was created with --no-network-policy. Otherwise
 // it's a plain `limactl start`. Either way it won't boot an instance that
 // Lima would mount host directories into beyond its own configuration's
-// (see checkMounts), or forward the host's SSH agent or X11 display into
-// (see checkForwarding); checkConfinable runs both on the confined path.
+// (see checkMounts), forward the host's SSH agent or X11 display into (see
+// checkForwarding), or forward a host socket into or copy files out of
+// (see checkHostChannels); checkConfinable runs all three on the confined
+// path.
 func (p *Provider) Start(ctx context.Context, name string) error {
 	if p.confine && !instanceUnrestricted(name) {
 		return p.startConfined(ctx, name)
@@ -133,6 +135,9 @@ func (p *Provider) Start(ctx context.Context, name string) error {
 		return err
 	}
 	if err := checkForwarding(j); err != nil {
+		return err
+	}
+	if err := checkHostChannels(j); err != nil {
 		return err
 	}
 	_, _, err = p.run(ctx, buildStartArgs(name)...)

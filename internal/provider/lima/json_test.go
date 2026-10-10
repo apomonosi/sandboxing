@@ -1,6 +1,7 @@
 package lima
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/apomonosi/sandboxing/internal/provider"
@@ -69,6 +70,37 @@ func TestParseLimaList_EffectiveSSH(t *testing.T) {
 	}
 	if ssh := got[0].Config.SSH; !ssh.ForwardAgent || ssh.ForwardX11 {
 		t.Errorf("Config.SSH = %+v, want forwardAgent on and forwardX11 off", ssh)
+	}
+}
+
+// TestParseLimaList_EffectivePortForwardsAndCopyToHost uses real `limactl
+// list --json` output (Lima v2.2.1, trimmed) for an instance agentctl
+// created with --port 8080:80, while default.yaml added a reverse socket
+// forward and a copyToHost entry.
+func TestParseLimaList_EffectivePortForwardsAndCopyToHost(t *testing.T) {
+	line := `{"name":"web","status":"Stopped","dir":"/home/u/.lima/web","config":{"portForwards":[` +
+		`{"guestIPMustBeZero":false,"guestIP":"127.0.0.1","guestPort":80,"guestPortRange":[80,80],"hostIP":"127.0.0.1","hostPort":8080,"hostPortRange":[8080,8080],"proto":"tcp"},` +
+		`{"guestIPMustBeZero":false,"guestIP":"127.0.0.1","guestPortRange":[1,65535],"guestSocket":"/run/user/1000/gpg-agent.sock","hostIP":"127.0.0.1","hostPortRange":[0,0],` +
+		`"hostSocket":"/home/u/.gnupg/S.gpg-agent.extra","proto":"any","reverse":true}],` +
+		`"copyToHost":[{"guest":"/etc/hostname","host":"/home/u/.kube/config"}]}}` + "\n"
+	got, err := parseLimaList([]byte(line))
+	if err != nil {
+		t.Fatalf("parseLimaList: %v", err)
+	}
+	if len(got) != 1 || got[0].Config == nil {
+		t.Fatalf("parseLimaList() = %+v, want one instance with its effective configuration", got)
+	}
+	c := got[0].Config
+	wantForwards := []limaPortForwardJSON{
+		{},
+		{GuestSocket: "/run/user/1000/gpg-agent.sock", HostSocket: "/home/u/.gnupg/S.gpg-agent.extra", Reverse: true},
+	}
+	if !reflect.DeepEqual(c.PortForwards, wantForwards) {
+		t.Errorf("PortForwards = %+v, want %+v", c.PortForwards, wantForwards)
+	}
+	wantCopies := []limaCopyToHostJSON{{GuestFile: "/etc/hostname", HostFile: "/home/u/.kube/config"}}
+	if !reflect.DeepEqual(c.CopyToHost, wantCopies) {
+		t.Errorf("CopyToHost = %+v, want %+v", c.CopyToHost, wantCopies)
 	}
 }
 

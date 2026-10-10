@@ -355,6 +355,9 @@ every start and refuses anything that would undermine its network policy:
 - **"would forward the host's SSH agent" (or "X11 display")** — Lima would
   forward one of them into the guest; see
   [below](#lima-start-fails-with-would-forward-the-hosts-ssh-agent-or-x11-display).
+- **"would forward the host socket" or "would copy"** — a reverse port
+  forward or a `copyToHost` entry; see
+  [below](#lima-start-fails-with-would-forward-the-host-socket-or-would-copy).
 
 ## Lima: `start` fails with "beyond what the instance's own configuration mounts"
 
@@ -410,6 +413,37 @@ That happens one of two ways:
     For X11, the same with `.ssh.forwardX11`.
 
 The check runs on every `start`, so editing `override.yaml` can stop a sandbox
+that started fine before.
+
+## Lima: `start` fails with "would forward the host socket" or "would copy"
+
+```
+agentctl: Lima would forward the host socket /var/run/docker.sock into instance "demo" (at /run/user/501/docker.sock), so agentctl won't start it: ...
+agentctl: Lima would copy /etc/rancher/k3s/k3s.yaml from instance "demo" to /Users/you/.kube/config on the host, so agentctl won't start it: ...
+```
+
+Lima is set to forward a socket on your host into the sandbox (a
+`portForwards` entry with `reverse: true`), or to copy a file out of the
+sandbox onto your host (`copyToHost`). Either would give the sandbox a way back
+to your host, so agentctl won't start it (see
+[Lima setup](../admin/providers/lima-setup.md#host-sockets-and-copied-files)).
+The entry comes from one of two places:
+
+- **`~/.lima/_config/default.yaml` or `override.yaml`** (the error names the
+  exact files). Lima merges both into every instance it starts, agentctl's
+  included, so a socket or file you set up there for your other Lima VMs
+  reaches the sandbox too. Remove the entry; if another VM needs it, put it in
+  that VM's own configuration (`limactl edit <vm>`) instead.
+- **The instance's own configuration**, if neither file has it: a custom
+  template with a reverse forward, or, for `copyToHost`, an instance an older
+  agentctl or `limactl` created. Remove it there, then `start` again:
+
+    ```console
+    $ limactl edit --set 'del(.portForwards[] | select(.reverse == true))' --start=false demo
+    $ limactl edit --set '.copyToHost = []' --start=false demo
+    ```
+
+The check runs on every `start`, so editing those files can stop a sandbox
 that started fine before.
 
 ## Lima: "network confinement check failed"

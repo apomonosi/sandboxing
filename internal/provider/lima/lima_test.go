@@ -279,6 +279,55 @@ func TestStart_RefusesForwarding(t *testing.T) {
 	}
 }
 
+// TestStart_RefusesHostChannels is the regression test for a sandbox
+// reaching back to the host through Lima's own configuration: a reverse
+// socket forward or a copyToHost entry, which default.yaml and
+// override.yaml merge into every instance. The entries are what Lima
+// v2.2.1 reports.
+func TestStart_RefusesHostChannels(t *testing.T) {
+	const published = `{"guestIPMustBeZero":false,"guestIP":"127.0.0.1","guestPort":80,"guestPortRange":[80,80],"hostIP":"127.0.0.1","hostPort":8080,"hostPortRange":[8080,8080],"proto":"tcp"}`
+	cases := []struct {
+		name    string
+		config  string
+		wantErr string // substring; "" means Start goes ahead
+	}{
+		{
+			name:   "a published port",
+			config: `{"portForwards":[` + published + `],"copyToHost":[]}`,
+		},
+		{
+			name: "default.yaml forwards a host socket in",
+			config: `{"portForwards":[` + published + `,{"guestIPMustBeZero":false,"guestIP":"127.0.0.1","guestPortRange":[1,65535],` +
+				`"guestSocket":"/run/user/1000/gpg-agent.sock","hostIP":"127.0.0.1","hostPortRange":[0,0],"hostSocket":"/home/u/.gnupg/S.gpg-agent.extra","proto":"any","reverse":true}]}`,
+			wantErr: "would forward the host socket /home/u/.gnupg/S.gpg-agent.extra",
+		},
+		{
+			name:    "default.yaml copies a guest file out",
+			config:  `{"copyToHost":[{"guest":"/etc/hostname","host":"/home/u/.kube/config"}]}`,
+			wantErr: "would copy /etc/hostname",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := &fakeRunner{listJSON: `[{"name":"demo","status":"Stopped","dir":"/lima/demo","config":` + tc.config + `}]`}
+			p := NewWithRunner(fr).(*Provider)
+
+			err := p.Start(context.Background(), "demo")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				assertLastCall(t, fr, append([]string{binary}, buildStartArgs("demo")...))
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Start() = %v, want it refused with %q", err, tc.wantErr)
+			}
+			assertNotStarted(t, fr)
+		})
+	}
+}
+
 func TestStart_NotFound(t *testing.T) {
 	fr := &fakeRunner{listJSON: `[{"name":"other","status":"Stopped","config":{"mounts":[]}}]`}
 	p, _ := newTestProvider(t, fr, false)

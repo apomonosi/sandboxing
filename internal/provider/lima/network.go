@@ -335,8 +335,9 @@ func buildNetworkEditArgs(name string, sshPort, proxyPort int) []string {
 // checkConfinable verifies Lima's effective configuration for an instance
 // (after its lima.yaml has been merged with ~/.lima/_config/default.yaml
 // and override.yaml) matches what confinement relies on, mounts nothing
-// the instance's own configuration doesn't (checkMounts), and forwards
-// neither the host's SSH agent nor X11 (checkForwarding).
+// the instance's own configuration doesn't (checkMounts), forwards neither
+// the host's SSH agent nor X11 (checkForwarding), and neither forwards a
+// host socket in nor copies files out (checkHostChannels).
 func checkConfinable(j limaInstanceJSON, plan *startPlan) error {
 	name := j.Name
 	if !strings.EqualFold(j.VMType, "vz") {
@@ -368,6 +369,12 @@ func checkConfinable(j limaInstanceJSON, plan *startPlan) error {
 	// override.yaml may turn on: the sandbox profile allows unix sockets,
 	// so a forwarded agent would be fully usable from the guest.
 	if err := checkForwarding(j); err != nil {
+		return err
+	}
+	// No host socket forwarded in, and no guest file copied out to the
+	// host: both reach from the guest back to the host, and the sandbox
+	// profile allows unix sockets, so a reverse-forwarded one would work.
+	if err := checkHostChannels(j); err != nil {
 		return err
 	}
 	// The egress policy lives in agentctl's config directory, and the

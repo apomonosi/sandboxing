@@ -64,12 +64,30 @@ func (j limaInstanceJSON) configDir() string {
 // limaConfigJSON is the part of an instance's effective lima.yaml that
 // Start checks: what network confinement depends on (checkConfinable),
 // what the guest gets mounted (checkMounts), and what Lima forwards into it
-// from the host (checkForwarding).
+// from the host or copies out of it (checkForwarding, checkHostChannels).
 type limaConfigJSON struct {
-	PropagateProxyEnv *bool             `json:"propagateProxyEnv"`
-	Env               map[string]string `json:"env"`
-	Mounts            []limaMountJSON   `json:"mounts"`
-	SSH               limaSSHJSON       `json:"ssh"`
+	PropagateProxyEnv *bool                 `json:"propagateProxyEnv"`
+	Env               map[string]string     `json:"env"`
+	Mounts            []limaMountJSON       `json:"mounts"`
+	SSH               limaSSHJSON           `json:"ssh"`
+	PortForwards      []limaPortForwardJSON `json:"portForwards"`
+	CopyToHost        []limaCopyToHostJSON  `json:"copyToHost"`
+}
+
+// limaPortForwardJSON is the part of a portForwards entry that says
+// whether it forwards a host socket into the guest. Lima has already
+// expanded the socket paths' templates.
+type limaPortForwardJSON struct {
+	GuestSocket string `json:"guestSocket"`
+	HostSocket  string `json:"hostSocket"`
+	Reverse     bool   `json:"reverse"`
+}
+
+// limaCopyToHostJSON is a copyToHost entry: a guest file Lima copies to a
+// host path once the guest is up, both with templates already expanded.
+type limaCopyToHostJSON struct {
+	GuestFile string `json:"guest"`
+	HostFile  string `json:"host"`
 }
 
 // limaSSHJSON is the part of the effective configuration's ssh section

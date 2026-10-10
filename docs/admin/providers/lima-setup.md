@@ -50,6 +50,8 @@ agentctl always forces these fields, whatever the template says:
 - `.ssh.forwardAgent = false` and `.ssh.forwardX11 = false` — so Lima doesn't
   forward your SSH agent or X11 display into the sandbox (see
   [SSH agent and X11 forwarding](#ssh-agent-and-x11-forwarding)).
+- `.copyToHost = []` — so Lima doesn't copy files out of the sandbox onto your
+  host (see [Host sockets and copied files](#host-sockets-and-copied-files)).
 
 `agentctl exec`/`shell` run as that user via `limactl shell <name> --
 <command>`; `--root` runs `sudo -n <command>` (exec) or `sudo -i` (shell)
@@ -108,6 +110,28 @@ turned forwarding off, which `default.yaml` still reaches. If `start` refuses,
 see
 [Troubleshooting](../../user/troubleshooting.md#lima-start-fails-with-would-forward-the-hosts-ssh-agent-or-x11-display).
 Like the mount check, this only runs on `agentctl start`.
+
+### Host sockets and copied files
+
+Two more Lima settings reach from the guest back to your host, and agentctl
+uses neither:
+
+- A `portForwards` entry with `reverse: true` forwards a socket on your host
+  into the guest, so anything in the sandbox can talk to whatever listens on
+  it — your Docker daemon (root on your host, in effect), say, or your GPG
+  agent. Ordinary port forwards, like the ones `--port` publishes, go the
+  other way and are fine.
+- `copyToHost` has Lima copy a file out of the guest onto your host once it
+  boots, so the sandbox decides what's written there. Lima's own Kubernetes
+  templates (`k3s`, `k8s` and others) use it to copy out a kubeconfig for your
+  `kubectl`.
+
+`create` clears `copyToHost`, the way it resets the template's mounts, so those
+templates still work; no stock template has a reverse forward. But Lima merges
+both from `~/.lima/_config/default.yaml` and `override.yaml` into every
+instance it starts, so `agentctl start` refuses an instance whose effective
+configuration has any of either, whatever added it. If `start` refuses, see
+[Troubleshooting](../../user/troubleshooting.md#lima-start-fails-with-would-forward-the-host-socket-or-would-copy).
 
 ## Network policy enforcement
 

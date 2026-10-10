@@ -112,6 +112,12 @@ named at `create` or `start` time. The defaults that make that hold:
   start` compares what Lima will actually mount with the instance's own
   configuration, and refuses to boot a sandbox that would see anything more —
   see [Lima setup](providers/lima-setup.md#mounts).
+- **Nor can it open other channels to the host.** A Lima reverse socket
+  forward would hand the sandbox a socket on the host (the Docker daemon's,
+  say), and `copyToHost` would let it decide what Lima writes to a host file.
+  agentctl uses neither: `create` clears the template's `copyToHost`, and
+  `start` refuses a sandbox whose effective configuration has either — see
+  [Lima setup](providers/lima-setup.md#host-sockets-and-copied-files).
 
 Two honest limits. First, read-only enforcement is per-provider — see the
 [capability matrix](capability-matrix.md); on Incus it is asserted from the
