@@ -2,6 +2,7 @@ package agent
 
 import (
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -160,6 +161,31 @@ func TestRegistry_ClaudeAllowsInstallAndAPI(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("claude should allow %q, got %+v", want, spec.AllowDomains)
+		}
+	}
+}
+
+// TestRegistry_EveryAgentHasAPreset pins the relationship the docs state as
+// a fact: `--allow-preset=<name>` allows exactly what `--agent=<name>`
+// does, for when the agent is installed some other way.
+//
+// presetRules panics on a missing preset, so a new agent without one fails
+// loudly at init rather than here. What this catches is the quieter
+// direction — an agent whose AllowDomains stopped coming from its preset,
+// which would make the two flags diverge silently. It also pairs with the
+// docs: two pages list the agent presets by name, and that list went stale
+// when gemini and cursor were added.
+func TestRegistry_EveryAgentHasAPreset(t *testing.T) {
+	for name, spec := range Registry {
+		preset, ok := profile.LookupPreset(name)
+		if !ok {
+			t.Errorf("agent %q has no built-in allow preset of the same name; "+
+				"--allow-preset=%s should allow exactly what --agent=%s does", name, name, name)
+			continue
+		}
+		if !reflect.DeepEqual(spec.AllowDomains, preset.Allow) {
+			t.Errorf("agent %q allows %+v but preset %q allows %+v — the two must stay identical",
+				name, spec.AllowDomains, name, preset.Allow)
 		}
 	}
 }

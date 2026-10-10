@@ -103,7 +103,7 @@ hosts:
 | `npm` | npm, pnpm, yarn | `registry.npmjs.org`, `registry.yarnpkg.com` (443) |
 | `github` | git over HTTPS, the API and `gh`, raw files, archives, release downloads | `github.com`, `api.github.com`, `codeload.github.com`, `raw.githubusercontent.com`, `release-assets.githubusercontent.com` (443) |
 | `gitlab` | the same, for GitLab.com | `gitlab.com` (443) |
-| `claude`, `codex`, `opencode`, `pi` | a coding agent's installer, sign-in and default model provider — exactly what `--agent=<name>` allows | see [Agent Provisioning](agent-provisioning.md#built-in-registry) |
+| `claude`, `codex`, `cursor`, `gemini`, `opencode`, `pi` | a coding agent's installer, sign-in and default model provider — exactly what `--agent=<name>` allows | see [Agent Provisioning](agent-provisioning.md#built-in-registry) |
 
 Use them on `create` (repeatable, or comma-separated), in a profile, or in a
 spec's `overrides`, and mix them freely with `--allow`:
