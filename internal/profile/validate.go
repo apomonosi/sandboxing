@@ -25,13 +25,26 @@ func Validate(p *Profile) error {
 		errs = append(errs, errors.New("metadata.name is required"))
 	}
 
-	errs = append(errs, validateNetwork(p.Spec.Network)...)
-	errs = append(errs, validateResources(p.Spec.Resources)...)
-	errs = append(errs, validateMounts(p.Spec.Mounts)...)
-	errs = append(errs, validateMountPolicy(p.Spec.MountPolicy)...)
-	errs = append(errs, validatePackages(p.Spec.Packages)...)
+	errs = append(errs, policyErrors(p.Spec)...)
 
 	return errors.Join(errs...)
+}
+
+// ValidatePolicy checks a Policy on its own, outside a Profile document —
+// e.g. a Spec's overrides — with the same rules Validate applies to a
+// profile's spec.
+func ValidatePolicy(p Policy) error {
+	return errors.Join(policyErrors(p)...)
+}
+
+func policyErrors(p Policy) []error {
+	var errs []error
+	errs = append(errs, validateNetwork(p.Network)...)
+	errs = append(errs, validateResources(p.Resources)...)
+	errs = append(errs, validateMounts(p.Mounts)...)
+	errs = append(errs, validateMountPolicy(p.MountPolicy)...)
+	errs = append(errs, validatePackages(p.Packages)...)
+	return errs
 }
 
 // validatePackages rejects names that aren't shaped like package names.
@@ -51,18 +64,19 @@ func validatePackages(pkgs []string) []error {
 func validateNetwork(n NetworkPolicy) []error {
 	var errs []error
 	for _, rule := range n.Allow {
-		d := strings.TrimSpace(rule.Domain)
-		if d == "" {
-			errs = append(errs, errors.New("network.allow: domain must not be empty"))
-			continue
-		}
-		if strings.ContainsAny(d, " \t") {
-			errs = append(errs, fmt.Errorf("network.allow: domain %q contains whitespace", d))
+		d := rule.Domain
+		if err := checkDomain(d); err != nil {
+			errs = append(errs, fmt.Errorf("network.allow: %w", err))
 		}
 		for _, port := range rule.Ports {
 			if port < 1 || port > 65535 {
 				errs = append(errs, fmt.Errorf("network.allow: domain %q has out-of-range port %d", d, port))
 			}
+		}
+	}
+	for _, name := range n.AllowPresets {
+		if _, ok := LookupPreset(name); !ok {
+			errs = append(errs, fmt.Errorf("network.allowPresets: unknown preset %q (valid: %s)", name, strings.Join(PresetNames(), ", ")))
 		}
 	}
 

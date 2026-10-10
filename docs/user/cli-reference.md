@@ -37,7 +37,9 @@ Creates an instance without starting it.
 | `--image <ref>` | Image reference (mutually exclusive with `--spec`) |
 | `--spec <file>` | Path to a Spec YAML document (see [Profile Schema](../reference/profile-schema.md)) |
 | `--profile <name>` | Named profile to apply (repeatable) |
-| `--allow <domain[:port,port]>` | Egress allowlist entry (repeatable) |
+| `--allow <entry>` | Egress allowlist entry: `host[:port,port]`, `*.domain[:ports]`, an IP address (`[v6]:port` with brackets), or an `http(s)://` URL, which allows its host on its port. One entry per flag (repeatable); hosts only, not URL paths — see [Egress allowlist](profiles-and-policies.md#egress-allowlist) |
+| `--allow-preset <name>` | Allow a built-in group of hosts: package sources and git hosts (`apt`, `apk`, `pypi`, `npm`, `github`, `gitlab`) or a coding agent's (`claude`, `codex`, `opencode`, `pi`, the same hosts `--agent` allows). Repeatable or comma-separated — see [Allowing package sources and git hosts](profiles-and-policies.md#allowing-package-sources-and-git-hosts) |
+| `--allow-file <path>` | Add the entries of an [allow file](profiles-and-policies.md#allow-files), one `--allow` entry per line (repeatable) |
 | `--deny-lan` / `--allow-lan` | Block (default) or allow LAN egress |
 | `--no-network-policy` | Apply no network ACL at all (unrestricted egress) — an explicit, loudly-warned escape hatch for debugging a sandbox that has locked itself out; see [Troubleshooting](troubleshooting.md#nothing-in-the-sandbox-can-reach-the-network--curl-fails-during-an-agent-install) |
 | `--port <host:guest[/proto]>` | Publish a port (repeatable) |
@@ -136,6 +138,11 @@ apt, dnf and apk. Supports `--json`.
 A name not in this table is passed to the guest's package manager verbatim
 — useful when you know your guest, but it ties the profile to one
 distribution.
+
+### `agentctl profile presets`
+
+List the built-in allow presets (`--allow-preset`, `allowPresets`) with the
+exact hosts and ports each one allows.
 
 ## Configuration
 
