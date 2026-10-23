@@ -120,6 +120,15 @@ func toInstance(j limaInstanceJSON) provider.Instance {
 	if t, err := time.Parse(time.RFC3339, j.CreatedAt); err == nil {
 		inst.CreatedAt = t
 	}
+	// Mounts come from the effective configuration — what Lima actually
+	// mounts — rather than the instance's own lima.yaml; checkMounts
+	// refuses a start where the two differ in the guest's favour.
+	if j.Config != nil {
+		for _, m := range j.Config.Mounts {
+			location, mountPoint, writable := resolveMount(m)
+			inst.Mounts = append(inst.Mounts, provider.Mount{HostPath: location, GuestPath: mountPoint, Writable: writable})
+		}
+	}
 	return inst
 }
 

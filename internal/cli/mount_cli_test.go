@@ -160,6 +160,37 @@ func TestCLI_StartWithoutMountFlagsKeepsExistingMounts(t *testing.T) {
 	}
 }
 
+// start prints the mount set Status reports, writable and read-only alike
+// — on Lima that list once came back empty however many mounts the guest
+// had, and start claimed none were exposed.
+func TestCLI_StartPrintsEachMount(t *testing.T) {
+	useIsolatedConfig(t)
+	home := useIsolatedHome(t)
+	pi01 := mustMkdir(t, filepath.Join(home, "pi01"))
+	ref := mustMkdir(t, filepath.Join(home, "ref"))
+	p := fake.New()
+
+	if _, err := execute(t, p, "create", "pibox", "--image=ubuntu", "--mount-none"); err != nil {
+		t.Fatal("create failed")
+	}
+	out, err := execute(t, p, "start", "pibox",
+		"--mount", pi01+":/home/pi.guest/work01:w", "--mount", ref+":/home/pi.guest/ref")
+	if err != nil {
+		t.Fatalf("start: %v (%s)", err, out)
+	}
+	for _, want := range []string{
+		pi01 + " -> /home/pi.guest/work01 (writable)",
+		ref + " -> /home/pi.guest/ref (read-only)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("start output %q should contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "no host directories") {
+		t.Errorf("start output %q claims no directories are exposed", out)
+	}
+}
+
 // A mount outside the profile's allowedRoots must be refused at start,
 // not just at create: the constraint is re-checked on every boot.
 func TestCLI_StartRejectsMountOutsideAllowedRoots(t *testing.T) {
@@ -274,4 +305,32 @@ func TestCLI_CreateWithoutPreflighterIsSilent(t *testing.T) {
 	if strings.Contains(out, "WARNING") {
 		t.Errorf("a provider without Preflight should produce no warnings, got %q", out)
 	}
+}
+
+// Mounts bind at boot, so start --mount on a running instance is refused
+// with a plain error naming the fix, before anything is applied, rather
+// than leaking whatever the backend says (Lima: "cannot edit a running
+// instance").
+func TestCLI_StartMountRefusesRunningInstance(t *testing.T) {
+	useIsolatedConfig(t)
+	home := useIsolatedHome(t)
+	alpha := mustMkdir(t, filepath.Join(home, "src", "alpha"))
+	beta := mustMkdir(t, filepath.Join(home, "src", "beta"))
+	p := fake.New()
+
+	if _, err := execute(t, p, "create", "work", "--image=ubuntu", "--mount", alpha+":/workspace:w"); err != nil {
+		t.Fatal("create failed")
+	}
+	if _, err := execute(t, p, "start", "work"); err != nil {
+		t.Fatal("start failed")
+	}
+	out, err := execute(t, p, "start", "work", "--mount", beta+":/workspace:w")
+	if err == nil {
+		t.Fatalf("start --mount on a running instance = nil error, want a refusal (%s)", out)
+	}
+	const want = "cannot change mounts while work is running: stop it first with `agentctl stop work`"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err, want)
+	}
+	assertSingleMount(t, p, alpha)
 }

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/apomonosi/sandboxing/internal/profile"
@@ -48,6 +50,14 @@ on every start.`,
 			// resolved set on every bare start would silently reset an
 			// instance to its profile's defaults.
 			if mounts.changed(cmd) {
+				// Both backends bind mounts at boot, and Lima's `limactl
+				// edit` refuses a running instance with a raw error, so
+				// say so plainly before resolving or applying anything.
+				if !previewRequested(cmd) {
+					if inst, err := p.Status(cmd.Context(), name); err == nil && inst.Status == provider.StatusRunning {
+						return fmt.Errorf("cannot change mounts while %s is running: stop it first with `agentctl stop %s`", name, name)
+					}
+				}
 				resolved, err := resolveStartMounts(cmd, name, profiles, mounts, previewRequested(cmd))
 				if err != nil {
 					return err

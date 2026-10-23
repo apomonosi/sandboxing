@@ -51,6 +51,15 @@ Creates an instance without starting it.
 | `--agent <name>` | Just-in-time install a coding agent (`claude`, `codex`, `cursor`, `gemini`, `opencode`, `pi`) — implies `start`; see [Agent Provisioning](agent-provisioning.md) |
 | `--package <name>` | Install a tool into the guest during create, before any `--agent` install (repeatable). Portable names — run `agentctl profile packages` for the table. Requesting packages defers the network ACL until after they're installed; see [Packages](../reference/profile-schema.md#packages) |
 
+A `--mount` guest path is used exactly as given. On Lima the guest user's
+home is `/home/<user>.guest`, not `/home/<user>` (`<user>` is the
+`--agent` name, or `agent`), so a mount meant to show up in a fresh
+`agentctl shell` belongs under it, for example
+`--mount ~/src/pi01:/home/pi.guest/work01:w`. A path such as
+`/home/pi/work01` is mounted all the same, but in a root-owned directory
+outside the user's home. On Incus the home is `/home/<user>`. See
+[Default non-root user](profiles-and-policies.md#default-non-root-user).
+
 Supports `--preview`/`--dry-run` (see [Preview Mode](preview-mode.md)); with
 `--agent` set, preview only shows the `create` command itself — the implied
 `start` and the install step aren't previewed and don't run under
@@ -76,14 +85,19 @@ verified`); `create --agent` prints the same line when it starts the instance. S
 ### `agentctl stop <name> [--force] [--timeout <secs>]` / `agentctl delete <name> [--force]`
 
 Standard lifecycle transitions. Both support `--preview`/`--dry-run`, as does
-`start`.
+`start`. `stop` on an instance that is already stopped prints `agentctl:
+<name> is already stopped` and succeeds; `stop --force` always goes to the
+backend.
 
 ### `agentctl list` (alias `ls`) / `agentctl status <name>`
 
 Show instances. `status` shows one instance's detail (IPs, image, profiles,
 created time, and — on Lima under macOS, for a running instance agentctl
 started confined — the result of the start-time network confinement check:
-`verified` or `unverified`; also `confinement` under `--output json`).
+`verified` or `unverified`; also `confinement` under `--output json`), and
+the host directories exposed to it, one `Mounts:` row each in the same
+`<host> -> <guest> (writable|read-only)` form `start` prints (`mounts`
+under `--output json`; no row when there are none).
 
 ## Interactive access
 

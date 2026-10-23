@@ -150,3 +150,35 @@ func TestMerge_EmptyOverrideKeepsBasePackages(t *testing.T) {
 		t.Errorf("Merge(base, empty).Packages = %v, want [git]", got)
 	}
 }
+
+// A profile carrying allowPresets: [claude] merged with --agent=claude's
+// own domains (create appends them to Allow) must list each host once:
+// the allowlist is what an operator reads in egress-policy.json. Rules
+// match on domain plus the set of ports, so order and repeats in Ports
+// don't matter but a different port set is a different rule.
+func TestMerge_AllowRulesDeduplicated(t *testing.T) {
+	claude, ok := LookupPreset("claude")
+	if !ok {
+		t.Fatal("no built-in claude preset")
+	}
+	base := Policy{Network: NetworkPolicy{
+		Allow:        []AllowRule{{Domain: "example.com", Ports: []int{443, 80}}},
+		AllowPresets: []string{"claude"},
+	}}
+	override := Policy{Network: NetworkPolicy{
+		Allow: append([]AllowRule{
+			{Domain: "example.com", Ports: []int{80, 443, 80}},
+			{Domain: "example.com", Ports: []int{8443}},
+		}, claude.Allow...),
+	}}
+
+	got := Merge(base, override).Network.AllowRules()
+
+	want := append([]AllowRule{
+		{Domain: "example.com", Ports: []int{443, 80}},
+		{Domain: "example.com", Ports: []int{8443}},
+	}, claude.Allow...)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("AllowRules() = %+v, want %+v", got, want)
+	}
+}

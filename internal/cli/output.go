@@ -50,6 +50,15 @@ func RenderInstance(w io.Writer, inst *provider.Instance, jsonOutput bool) error
 	if inst.Confinement != "" {
 		fmt.Fprintf(tw, "Confinement:\t%s\n", inst.Confinement)
 	}
+	// One mount per row, the label on the first only; no row at all when
+	// there are none, like Confinement.
+	for i, m := range inst.Mounts {
+		label := ""
+		if i == 0 {
+			label = "Mounts:"
+		}
+		fmt.Fprintf(tw, "%s\t%s\n", label, describeMount(m))
+	}
 	return tw.Flush()
 }
 

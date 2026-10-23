@@ -77,20 +77,24 @@ func TestRegistry_InstallScriptsAreValidPOSIXShell(t *testing.T) {
 }
 
 // fakeCurl stands in for curl: it records its arguments in $CURL_ARGS
-// and, per $CURL_MODE, fails the way curl -f does on a 403, or writes a
-// script that prints which shell ran it and exits $SCRIPT_STATUS to the
-// -o file.
+// and, per $CURL_MODE, fails the way curl -f does, writing to stdout the
+// "%{http_code} %{http_connect}" pair real curl 8.5 writes for that
+// failure — or writes a script that prints which shell ran it and exits
+// $SCRIPT_STATUS to the -o file.
 const fakeCurl = `#!/bin/sh
 echo "$*" >"$CURL_ARGS"
 while [ $# -gt 0 ]; do
 	[ "$1" = -o ] && out=$2
 	shift
 done
-if [ "$CURL_MODE" = fail ]; then
-	echo "curl: (22) The requested URL returned error: 403" >&2
-	exit 22
-fi
+case $CURL_MODE in
+proxy403) printf '000 403'; exit 22 ;;
+server403) printf '403 000'; exit 22 ;;
+server429) printf '429 000'; exit 22 ;;
+noconnect) printf '000 000'; exit 7 ;;
+esac
 printf 'echo "ran by $RUN_BY"\nexit %s\n' "$SCRIPT_STATUS" >"$out"
+printf '200 000'
 `
 
 type fetchRunResult struct {
@@ -153,26 +157,41 @@ func shells(t *testing.T) []string {
 	return found
 }
 
-// A refused download is a failed install with one line naming the agent
-// and the URL, and the downloaded file is never run.
+// A refused download is a failed install with one line naming the agent,
+// the URL and what went wrong, and the downloaded file is never run. Only
+// a 403 — what agentctl's egress proxy answers, to CONNECT for an https
+// URL — or a failed connection points at the allow preset: a 429 from a
+// rate-limited installer once sent people looking for a policy block.
 func TestFetchRun_DownloadFails(t *testing.T) {
-	const want = "agentctl: pi: could not download https://pi.dev/install.sh (curl exit 22); the sandbox's egress policy may be refusing it — check the agent's allow preset"
+	const url = "https://pi.dev/install.sh"
+	const policy = "; the sandbox's egress policy may be refusing it — check the agent's allow preset"
+	cases := map[string]string{
+		"proxy403":  "agentctl: pi: could not download " + url + " (HTTP 403, curl exit 22)" + policy,
+		"server403": "agentctl: pi: could not download " + url + " (HTTP 403, curl exit 22)" + policy,
+		"server429": "agentctl: pi: could not download " + url + ": the server refused the request with HTTP 429 (curl exit 22)",
+		"noconnect": "agentctl: pi: could not download " + url + ": could not connect (curl exit 7); check the network, or whether the sandbox's egress policy allows it — see the agent's allow preset",
+	}
 	for _, sh := range shells(t) {
-		r := runFetchRun(t, sh, "fail", "0", "agentctl_fetch_run pi sh https://pi.dev/install.sh -fsSL")
-		if r.status == 0 {
-			t.Errorf("%s: status 0 after a failed download\n%s", sh, r.out)
-		}
-		if n := strings.Count(r.out, "agentctl: pi:"); n != 1 {
-			t.Errorf("%s: %d agentctl: pi: lines, want 1\n%s", sh, n, r.out)
-		}
-		if !strings.Contains(r.out, want+"\n") {
-			t.Errorf("%s: output %q does not contain %q", sh, r.out, want)
-		}
-		if strings.Contains(r.out, "ran by") {
-			t.Errorf("%s: installer ran after a failed download\n%s", sh, r.out)
-		}
-		if len(r.tmpLeft) != 0 {
-			t.Errorf("%s: temporary files left behind: %v", sh, r.tmpLeft)
+		for mode, want := range cases {
+			r := runFetchRun(t, sh, mode, "0", "agentctl_fetch_run pi sh "+url+" -fsSL")
+			if r.status == 0 {
+				t.Errorf("%s %s: status 0 after a failed download\n%s", sh, mode, r.out)
+			}
+			if n := strings.Count(r.out, "agentctl: pi:"); n != 1 {
+				t.Errorf("%s %s: %d agentctl: pi: lines, want 1\n%s", sh, mode, n, r.out)
+			}
+			if !strings.Contains(r.out, want+"\n") {
+				t.Errorf("%s %s: output %q does not contain %q", sh, mode, r.out, want)
+			}
+			if mode == "server429" && strings.Contains(r.out, "allow preset") {
+				t.Errorf("%s %s: output %q blames the allow preset for a 429", sh, mode, r.out)
+			}
+			if strings.Contains(r.out, "ran by") {
+				t.Errorf("%s %s: installer ran after a failed download\n%s", sh, mode, r.out)
+			}
+			if len(r.tmpLeft) != 0 {
+				t.Errorf("%s %s: temporary files left behind: %v", sh, mode, r.tmpLeft)
+			}
 		}
 	}
 }

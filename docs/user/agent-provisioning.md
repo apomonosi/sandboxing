@@ -24,6 +24,11 @@ $ claude --version
 3. Sets the instance's [default non-root user](profiles-and-policies.md#default-non-root-user)
    to the agent's name (e.g. `--agent=claude` creates and runs as a `claude`
    user), unless you're already relying on a different default elsewhere.
+   On Lima that user's home inside the guest is `/home/<agent>.guest`
+   (`/home/claude.guest`), which is also where installers such as pi's
+   put the agent's binary; on Incus it is `/home/<agent>`. A `--mount`
+   meant to be visible in a fresh shell should use a guest path under that
+   home, for example `--mount ~/src/pi01:/home/pi.guest/work01:w`.
 4. Because installing requires a *running*, agent-ready instance while
    `create` normally leaves the instance stopped, `--agent` implies
    `start` — you get back a running instance, not a stopped one.

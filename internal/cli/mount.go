@@ -136,12 +136,18 @@ func renderMounts(w io.Writer, mounts []provider.Mount, jsonOutput bool) {
 	}
 	fmt.Fprintln(w, "agentctl: host directories exposed to this sandbox:")
 	for _, m := range mounts {
-		access := "read-only"
-		if m.Writable {
-			access = "writable"
-		}
-		fmt.Fprintf(w, "  %s -> %s (%s)\n", m.HostPath, m.GuestPath, access)
+		fmt.Fprintf(w, "  %s\n", describeMount(m))
 	}
+}
+
+// describeMount is one mount as start and status both print it:
+// "<host> -> <guest> (writable|read-only)".
+func describeMount(m provider.Mount) string {
+	access := "read-only"
+	if m.Writable {
+		access = "writable"
+	}
+	return fmt.Sprintf("%s -> %s (%s)", m.HostPath, m.GuestPath, access)
 }
 
 // renderConfinement prints what the backend's start-time network

@@ -7,7 +7,12 @@
 // ad-hoc flags.
 package profile
 
-import "github.com/apomonosi/sandboxing/internal/provider"
+import (
+	"fmt"
+	"slices"
+
+	"github.com/apomonosi/sandboxing/internal/provider"
+)
 
 // APIVersion and Kind are the only accepted values today. Checking them on
 // load is a forward-compatibility guard, not current versioning support.
@@ -172,12 +177,29 @@ type Console struct {
 
 // AllowRules returns the complete egress allowlist: the Allow rules, then
 // those of each preset in AllowPresets. An unknown preset name adds
-// nothing (Validate reports those).
+// nothing (Validate reports those). A rule naming the same domain and set
+// of ports as an earlier one is dropped — a profile's preset and the same
+// agent's --agent domains would otherwise list every host twice in the
+// egress-policy.json an operator audits — keeping first-seen order.
 func (n NetworkPolicy) AllowRules() []AllowRule {
-	rules := append([]AllowRule(nil), n.Allow...)
+	var rules []AllowRule
+	seen := make(map[string]bool)
+	add := func(r AllowRule) {
+		ports := slices.Compact(slices.Sorted(slices.Values(r.Ports)))
+		key := fmt.Sprint(r.Domain, ports)
+		if !seen[key] {
+			seen[key] = true
+			rules = append(rules, r)
+		}
+	}
+	for _, r := range n.Allow {
+		add(r)
+	}
 	for _, name := range n.AllowPresets {
 		if p, ok := LookupPreset(name); ok {
-			rules = append(rules, p.Allow...)
+			for _, r := range p.Allow {
+				add(r)
+			}
 		}
 	}
 	return rules

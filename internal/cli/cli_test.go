@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,6 +177,68 @@ func TestCLI_Status_NoConfinementLabelWhenEmpty(t *testing.T) {
 	out, err := execute(t, p, "status", "demo")
 	if err != nil || strings.Contains(out, "Confinement") {
 		t.Errorf("status output %q (err %v), want no Confinement label for a stopped instance", out, err)
+	}
+}
+
+// status lists the mounts the backend reports, one row each, worded as
+// start prints them. Under --output json nothing new prints: they are in
+// the instance's existing "mounts" field.
+func TestCLI_Status_ShowsMounts(t *testing.T) {
+	useIsolatedConfig(t)
+	home := useIsolatedHome(t)
+	pi01 := mustMkdir(t, filepath.Join(home, "pi01"))
+	ref := mustMkdir(t, filepath.Join(home, "ref"))
+	p := fake.New()
+	if _, err := execute(t, p, "create", "pibox", "--image=ubuntu",
+		"--mount", pi01+":/home/pi.guest/work01:w", "--mount", ref+":/home/pi.guest/ref"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	out, err := execute(t, p, "status", "pibox")
+	if err != nil {
+		t.Fatalf("status: %v (%s)", err, out)
+	}
+	var rows []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, " -> ") {
+			rows = append(rows, line)
+		}
+	}
+	if len(rows) != 2 || !strings.HasPrefix(rows[0], "Mounts:") || strings.Contains(rows[1], "Mounts:") {
+		t.Fatalf("status output %q: want two mount rows, the first labelled Mounts:", out)
+	}
+	for _, want := range []string{
+		pi01 + " -> /home/pi.guest/work01 (writable)",
+		ref + " -> /home/pi.guest/ref (read-only)",
+	} {
+		if !strings.HasSuffix(rows[0], " "+want) && !strings.HasSuffix(rows[1], " "+want) {
+			t.Errorf("status output %q should have a row ending %q", out, want)
+		}
+	}
+
+	out, err = execute(t, p, "--output=json", "status", "pibox")
+	if err != nil {
+		t.Fatalf("status --output=json: %v (%s)", err, out)
+	}
+	var inst provider.Instance
+	if err := json.Unmarshal([]byte(out), &inst); err != nil {
+		t.Fatalf("status --output=json is not one JSON document: %v\n%s", err, out)
+	}
+	if len(inst.Mounts) != 2 {
+		t.Errorf("status JSON mounts = %+v, want both", inst.Mounts)
+	}
+}
+
+func TestCLI_Status_NoMountsLabelWhenEmpty(t *testing.T) {
+	useIsolatedConfig(t)
+	useIsolatedHome(t)
+	p := fake.New()
+	if _, err := execute(t, p, "create", "demo", "--image=ubuntu", "--mount-none"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	out, err := execute(t, p, "status", "demo")
+	if err != nil || strings.Contains(out, "Mounts") || strings.Contains(out, "->") {
+		t.Errorf("status output %q (err %v), want no Mounts label for an instance with none", out, err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,6 +33,18 @@ func newStopCmd() *cobra.Command {
 				return pv.PreviewStop(args[0], opts)
 			}); handled {
 				return err
+			}
+			// Stopping a stopped instance is not an error, but both
+			// backends' stop commands treat it as one (Lima: "expected
+			// status `Running`, got `Stopped`"). --force goes straight to
+			// the backend, as before.
+			if !force {
+				if inst, err := p.Status(cmd.Context(), args[0]); err == nil && inst.Status == provider.StatusStopped {
+					if !jsonOutput(cmd) {
+						fmt.Fprintf(cmd.OutOrStdout(), "agentctl: %s is already stopped\n", args[0])
+					}
+					return nil
+				}
 			}
 			return p.Stop(cmd.Context(), args[0], opts)
 		},

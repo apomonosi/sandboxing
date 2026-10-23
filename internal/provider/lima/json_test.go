@@ -104,6 +104,31 @@ func TestParseLimaList_EffectivePortForwardsAndCopyToHost(t *testing.T) {
 	}
 }
 
+// TestToInstance_ReportsEffectiveMounts decodes `limactl list --json`
+// output (shaped like Lima v2.2.1's) for an instance with one writable and
+// one read-only mount, and checks both reach the Instance that Status
+// returns — `start` and `status` print exactly that list.
+func TestToInstance_ReportsEffectiveMounts(t *testing.T) {
+	line := `{"name":"pibox","status":"Running","dir":"/home/u/.lima/pibox","vmType":"vz",` +
+		`"config":{"vmType":"vz","mounts":[` +
+		`{"location":"/Users/u/pi01","mountPoint":"/home/pi.guest/work01","writable":true},` +
+		`{"location":"/Users/u/ref","mountPoint":"/home/pi.guest/ref","writable":false}]}}` + "\n"
+	got, err := parseLimaList([]byte(line))
+	if err != nil {
+		t.Fatalf("parseLimaList: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("parseLimaList() = %+v, want one instance", got)
+	}
+	want := []provider.Mount{
+		{HostPath: "/Users/u/pi01", GuestPath: "/home/pi.guest/work01", Writable: true},
+		{HostPath: "/Users/u/ref", GuestPath: "/home/pi.guest/ref", Writable: false},
+	}
+	if inst := toInstance(got[0]); !reflect.DeepEqual(inst.Mounts, want) {
+		t.Errorf("toInstance().Mounts = %+v, want %+v", inst.Mounts, want)
+	}
+}
+
 func TestParseLimaList_Empty(t *testing.T) {
 	got, err := parseLimaList([]byte(""))
 	if err != nil {
