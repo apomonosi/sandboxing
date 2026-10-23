@@ -24,7 +24,8 @@ func TestRegistry_NoInstallerPipedIntoShell(t *testing.T) {
 }
 
 // Each curl installer keeps its agent's own shell, URL and curl flags,
-// after the helper that defines agentctl_fetch_run.
+// after the helper that defines agentctl_fetch_run, and its failure stops
+// the script before the PATH step that follows it.
 func TestRegistry_InstallersUseFetchRun(t *testing.T) {
 	want := map[string]string{
 		"claude":   "agentctl_fetch_run claude bash https://claude.ai/install.sh -fsSL",
@@ -38,25 +39,17 @@ func TestRegistry_InstallersUseFetchRun(t *testing.T) {
 		if !strings.Contains(script, fetchRun) {
 			t.Errorf("%s: install script does not include the fetch helper", name)
 		}
-		// pi is the exception to prefix/suffix: its script also carries
-		// the Node and tools bootstraps before the fetch and puts pi on
-		// PATH after it, so the call sits in the middle — and its failure
-		// must still stop the script before that last step.
-		if name == "pi" {
-			if !strings.Contains(script, "\n"+call+" || exit\n") {
-				t.Errorf("pi: install script should run %q and exit on its failure, got %q", call, script)
-			}
-			continue
+		if !strings.Contains(script, "\n"+call+" || exit\nagentctl_agent_on_path "+name+" ") {
+			t.Errorf("%s: install script should run %q, exit on its failure, then put %s on PATH, got %q", name, call, name, script)
 		}
-		if !strings.HasPrefix(script, fetchRun) {
-			t.Errorf("%s: install script does not start with the fetch helper", name)
-		}
-		if !strings.HasSuffix(script, "\n"+call) {
-			t.Errorf("%s: install script should end with %q, got %q", name, call, script[len(fetchRun):])
+		// pi's script also carries the Node and tools bootstraps between
+		// the two helpers.
+		if name != "pi" && !strings.HasPrefix(script, pathAdd+fetchRun) {
+			t.Errorf("%s: install script does not start with the PATH and fetch helpers", name)
 		}
 	}
-	if got := Registry["gemini"].InstallScript; got != "npm install -g @google/gemini-cli" {
-		t.Errorf("gemini: install script changed to %q", got)
+	if got, want := Registry["gemini"].InstallScript, pathAdd+"npm install -g @google/gemini-cli || exit\nagentctl_agent_on_path gemini gemini"; got != want {
+		t.Errorf("gemini: install script changed to %q", got[len(pathAdd):])
 	}
 }
 

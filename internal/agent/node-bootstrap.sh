@@ -8,9 +8,8 @@
 # which is a no-op when a new enough node is already on PATH, and otherwise
 # installs Node system-wide (or under ~/.local/node without sudo). Every
 # failure prints one "agentctl: <agent>: ..." line and exits non-zero, so
-# agentctl's retry-on-start applies. It also defines agentctl_path_add and
-# agentctl_agent_on_path, which put a directory under $HOME on PATH; the
-# caller runs the latter after the agent's own installer. POSIX sh: Incus
+# agentctl's retry-on-start applies. Installing without sudo uses
+# agentctl_path_add, so path-add.sh must come first. POSIX sh: Incus
 # guests may be Alpine.
 
 # The Node release line installed when the guest has none, or too old a
@@ -21,31 +20,6 @@ agentctl_node_dist=https://nodejs.org/dist/$agentctl_node_line
 agentctl_node_fail() {
 	echo "agentctl: $agentctl_node_agent: $*" >&2
 	exit 1
-}
-
-# agentctl_path_add DIR puts $HOME/DIR first on PATH for the rest of this
-# script, and adds the same export to ~/.profile once, since login shells
-# (agentctl shell) read it and agentctl's exec does not.
-agentctl_path_add() {
-	PATH=$HOME/$1:$PATH
-	export PATH
-	# shellcheck disable=SC2016 # expanded by the login shell, not here
-	export_line='export PATH="$HOME/'$1':$PATH"'
-	grep -qxF "$export_line" "$HOME/.profile" 2>/dev/null ||
-		printf '%s\n' "$export_line" >>"$HOME/.profile"
-}
-
-# agentctl_agent_on_path AGENT DIR runs after AGENT's own installer, which
-# put the binary in $HOME/DIR without adding that to PATH anywhere: it
-# makes AGENT runnable by name through agentctl_path_add. Never fails; a
-# binary somewhere else only gets a notice.
-agentctl_agent_on_path() {
-	if [ -x "$HOME/$2/$1" ]; then
-		agentctl_path_add "$2"
-	else
-		echo "agentctl: $1: no $1 at $HOME/$2/$1 after its installer, so it is not on PATH; add the directory it installed to by hand" >&2
-	fi
-	return 0
 }
 
 # agentctl_version_ge A B succeeds when dotted version A (an optional

@@ -30,7 +30,7 @@ func allowsExactly(rules []profile.AllowRule, host string) bool {
 func TestRegistry_InstallHostAllowlisted(t *testing.T) {
 	urlRE := regexp.MustCompile(`https://[^\s|]+`)
 	for name, spec := range Registry {
-		if strings.HasPrefix(spec.InstallScript, "npm ") {
+		if strings.HasPrefix(strings.TrimPrefix(spec.InstallScript, pathAdd), "npm ") {
 			if !allowsExactly(spec.AllowDomains, "registry.npmjs.org") {
 				t.Errorf("%s: npm installer, but registry.npmjs.org:443 is not in AllowDomains %+v", name, spec.AllowDomains)
 			}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/apomonosi/sandboxing/internal/packages"
@@ -33,8 +34,15 @@ func Validate(p *Profile) error {
 // ValidatePolicy checks a Policy on its own, outside a Profile document —
 // e.g. a Spec's overrides — with the same rules Validate applies to a
 // profile's spec.
+//
+// agents is the exception: it says which agents one profile is for, so
+// it has no meaning in a layer that isn't a profile.
 func ValidatePolicy(p Policy) error {
-	return errors.Join(policyErrors(p)...)
+	errs := policyErrors(p)
+	if len(p.Agents) > 0 {
+		errs = append(errs, errors.New("agents: only a profile can declare the agents it is for"))
+	}
+	return errors.Join(errs...)
 }
 
 func policyErrors(p Policy) []error {
@@ -44,6 +52,32 @@ func policyErrors(p Policy) []error {
 	errs = append(errs, validateMounts(p.Mounts)...)
 	errs = append(errs, validateMountPolicy(p.MountPolicy)...)
 	errs = append(errs, validatePackages(p.Packages)...)
+	errs = append(errs, validateAgents(p.Agents)...)
+	return errs
+}
+
+// KnownAgents returns every valid agent name. internal/agent sets it from
+// its registry at init: that package imports this one, so this one cannot
+// import it. Left nil, a profile that declares agents fails to load
+// rather than going unchecked.
+var KnownAgents func() []string
+
+// validateAgents rejects agent names the registry doesn't know, in the
+// same words `create --agent` uses for one.
+func validateAgents(agents []string) []error {
+	if len(agents) == 0 {
+		return nil
+	}
+	if KnownAgents == nil {
+		return []error{errors.New("agents: no agent registry to check the names against")}
+	}
+	valid := KnownAgents()
+	var errs []error
+	for _, name := range agents {
+		if !slices.Contains(valid, name) {
+			errs = append(errs, fmt.Errorf("agents: unknown agent %q (valid: %s)", name, strings.Join(valid, ", ")))
+		}
+	}
 	return errs
 }
 

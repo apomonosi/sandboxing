@@ -19,6 +19,8 @@ package profile
 //   - Resources, Console.Viewer: override's value wins whenever it is
 //     non-zero/non-empty, otherwise base's value is kept
 //   - MountPolicy: narrow-only, see mergeMountPolicy
+//   - Agents: not merged; base's is kept as-is. It describes one
+//     profile, and create checks it against each profile by itself
 //
 // Network.AllowFile plays no part: loading the profile or spec that names
 // an allow file already turned its entries into Allow rules (see

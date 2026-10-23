@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -132,6 +133,11 @@ func newCreateCmd() *cobra.Command {
 			policy, err = mounts.apply(policy)
 			if err != nil {
 				return err
+			}
+			if agentName != "" {
+				if err := checkProfileAgents(profileNames, profileDirFlag(cmd), agentName); err != nil {
+					return err
+				}
 			}
 
 			fp := forcePartial(cmd)
@@ -267,4 +273,21 @@ func newCreateCmd() *cobra.Command {
 	mounts.register(cmd)
 
 	return cmd
+}
+
+// checkProfileAgents refuses agentName when any of the named profiles
+// declares the agents it is for and agentName is not one of them, naming
+// the first profile that refuses it. The merged policy can't answer this:
+// each profile's list constrains the agent on its own.
+func checkProfileAgents(profileNames []string, profileDir, agentName string) error {
+	for _, name := range profileNames {
+		p, err := profile.LoadNamed(name, profileDir)
+		if err != nil {
+			return fmt.Errorf("resolving profile %q: %w", name, err)
+		}
+		if len(p.Spec.Agents) > 0 && !slices.Contains(p.Spec.Agents, agentName) {
+			return fmt.Errorf("profile %q is for agents [%s], not %q", name, strings.Join(p.Spec.Agents, ", "), agentName)
+		}
+	}
+	return nil
 }

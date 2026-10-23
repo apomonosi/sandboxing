@@ -73,31 +73,34 @@ type Spec struct {
 //   - every curl installer is fetched to a file by fetchRun and only run
 //     once curl has succeeded, rather than piped into a shell: a pipeline
 //     exits with the shell's status, and a shell given nothing exits 0.
+//   - every install script ends by putting the agent's binary on PATH
+//     (see onPath), since installers commonly leave it where a later
+//     `agentctl shell` cannot find it by name.
 //   - cursor's runtime traffic is spread across more domains than any
 //     other entry here; its preset covers install plus the primary API
 //     path, and anything beyond that is a --allow extension.
 var Registry = map[string]Spec{
 	"claude": {
 		Name:          "claude",
-		InstallScript: fetchRun + "agentctl_fetch_run claude bash https://claude.ai/install.sh -fsSL",
+		InstallScript: onPath("claude", "claude", fetchRun+"agentctl_fetch_run claude bash https://claude.ai/install.sh -fsSL"),
 		EnvVar:        "ANTHROPIC_API_KEY",
 		AllowDomains:  presetRules("claude"),
 	},
 	"codex": {
 		Name:          "codex",
-		InstallScript: fetchRun + "agentctl_fetch_run codex sh https://chatgpt.com/codex/install.sh -fsSL",
+		InstallScript: onPath("codex", "codex", fetchRun+"agentctl_fetch_run codex sh https://chatgpt.com/codex/install.sh -fsSL"),
 		EnvVar:        "OPENAI_API_KEY",
 		AllowDomains:  presetRules("codex"),
 	},
 	"opencode": {
 		Name:          "opencode",
-		InstallScript: fetchRun + "agentctl_fetch_run opencode bash https://opencode.ai/install -fsSL",
+		InstallScript: onPath("opencode", "opencode", fetchRun+"agentctl_fetch_run opencode bash https://opencode.ai/install -fsSL"),
 		EnvVar:        "",
 		AllowDomains:  presetRules("opencode"),
 	},
 	"pi": {
 		Name:          "pi",
-		InstallScript: piInstallScript,
+		InstallScript: onPath("pi", "pi", piInstallScript),
 		EnvVar:        "ANTHROPIC_API_KEY",
 		AllowDomains:  presetRules("pi"),
 	},
@@ -105,7 +108,7 @@ var Registry = map[string]Spec{
 		Name: "gemini",
 		// npm, not curl — see the Registry comment above. The guest must
 		// already have Node.js >= 20; this does not install it.
-		InstallScript: "npm install -g @google/gemini-cli",
+		InstallScript: onPath("gemini", "gemini", "npm install -g @google/gemini-cli"),
 		// Gemini CLI documents three auth paths (GEMINI_API_KEY,
 		// GOOGLE_API_KEY + GOOGLE_GENAI_USE_VERTEXAI for Vertex AI, and
 		// GOOGLE_CLOUD_PROJECT for Code Assist). GEMINI_API_KEY is the
@@ -116,8 +119,9 @@ var Registry = map[string]Spec{
 	"cursor": {
 		Name: "cursor",
 		// Cursor's own documented flags: -fsS, and no -L. Kept rather
-		// than normalized to match the other curl entries above.
-		InstallScript: fetchRun + "agentctl_fetch_run cursor bash https://cursor.com/install -fsS",
+		// than normalized to match the other curl entries above. The
+		// binary it installs is cursor-agent, not cursor.
+		InstallScript: onPath("cursor", "cursor-agent", fetchRun+"agentctl_fetch_run cursor bash https://cursor.com/install -fsS"),
 		EnvVar:        "CURSOR_API_KEY",
 		AllowDomains:  presetRules("cursor"),
 	},
@@ -139,14 +143,27 @@ var toolsBootstrap string
 
 // piInstallScript is pi's documented one-liner, after installing ripgrep
 // and fd where the package source is reachable and making sure Node.js is
-// at least the 22.19.0 pi's installer requires. pi installs into
-// ~/.pi/agent/bin and adds that to no PATH, so once its installer has
-// succeeded, agentctl_agent_on_path puts it there via ~/.profile.
+// at least the 22.19.0 pi's installer requires. nodeBootstrap needs
+// pathAdd ahead of it, which onPath supplies.
 var piInstallScript = nodeBootstrap + toolsBootstrap + fetchRun +
 	"agentctl_ensure_tools pi\n" +
 	"agentctl_ensure_node pi 22.19.0\n" +
-	"agentctl_fetch_run pi sh https://pi.dev/install.sh -fsSL || exit\n" +
-	"agentctl_agent_on_path pi .pi/agent/bin"
+	"agentctl_fetch_run pi sh https://pi.dev/install.sh -fsSL"
+
+// pathAdd defines agentctl_path_add and agentctl_agent_on_path, which put
+// a directory on PATH now and through ~/.profile. See the script's header.
+//
+//go:embed path-add.sh
+var pathAdd string
+
+// onPath wraps an agent's install script so that, once the script has
+// succeeded, agentctl_agent_on_path makes binary runnable by name. The
+// script's last command is the installer, so its failure still ends the
+// script with the installer's status.
+func onPath(agent, binary, script string) string {
+	return pathAdd + script + " || exit\n" +
+		"agentctl_agent_on_path " + agent + " " + binary
+}
 
 // fetchRun defines agentctl_fetch_run, which downloads an agent's
 // installer to a temporary file and runs it only if curl succeeded. See
@@ -165,6 +182,12 @@ func presetRules(name string) []profile.AllowRule {
 		panic("agent: no built-in allow preset " + name)
 	}
 	return p.Allow
+}
+
+// profile checks a profile's agents list against this registry, which it
+// cannot import; see profile.KnownAgents.
+func init() {
+	profile.KnownAgents = Names
 }
 
 // Lookup returns the Spec for name and whether it was found.

@@ -356,6 +356,29 @@ This applies the `default` profile's full allowlist plus the `github`
 preset's hosts, and publishes port 9000 in addition to anything the profile
 already defined.
 
+## Tying a profile to its agents
+
+A profile's network is usually chosen for one particular agent: one reaches
+only the Anthropic API, one a local inference server, one a shared internal
+model server. `--profile` and `--agent` are independent flags, though, so a
+mistyped pair would quietly give an agent the wrong network — source meant
+for a local model sent to a shared one. A profile can say which agents it is
+for, and `create` then refuses any other before doing anything:
+
+```yaml
+spec:
+  agents: [pi]
+```
+
+```console
+$ agentctl create demo --image=… --profile=pi-local --agent=claude
+agentctl: profile "pi-local" is for agents [pi], not "claude"
+```
+
+With several `--profile` flags the agent has to be in every list that is
+declared. A profile without `agents` works with any agent, and a `create`
+with no `--agent` is not affected.
+
 ## Where profiles live
 
 `agentctl profile list`/`show`/`set` search, in order:

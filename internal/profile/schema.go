@@ -37,7 +37,15 @@ type Policy struct {
 	Resources   Resources     `yaml:"resources"`
 	Mounts      []Mount       `yaml:"mounts"`
 	MountPolicy MountPolicy   `yaml:"mountPolicy"`
-	Console     Console       `yaml:"console"`
+	// Agents names the agents (internal/agent) this profile is meant
+	// for; `create --agent` refuses any other. Empty means any agent. A
+	// profile's network is usually chosen for one agent, and --profile and
+	// --agent are independent flags, so this is what stops a mistyped pair
+	// from giving an agent the wrong network. Not merged (see Merge): it
+	// is checked against each profile on its own, and a spec's overrides
+	// may not set it (see ValidatePolicy).
+	Agents  []string `yaml:"agents"`
+	Console Console  `yaml:"console"`
 	// Packages are neutral tool names (internal/packages) installed into
 	// the guest during create, before any agent install runs. Additive on
 	// merge, like Network.Allow: a profile chain can only ever add tools,

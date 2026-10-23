@@ -31,6 +31,9 @@ $ claude --version
    output to your terminal. A curl installer is downloaded to a file and
    run only if the download succeeded, so a blocked download fails the
    install instead of being recorded as one.
+   Once it has succeeded, agentctl puts the installed agent on `PATH`
+   through `~/.profile` (unless it is already there), so `agentctl shell`
+   finds it by name.
 
 ## Built-in registry
 

@@ -55,6 +55,11 @@ spec:
     denyPaths: [string]           # never mountable, even under an allowed root
     allowHome: bool               # default false; permits mounting $HOME itself
     createMissing: bool           # default false; mkdir 0700 a missing hostPath
+  agents: [string]                # optional; the agents this profile is for —
+                                   # `create --agent` refuses any other. Empty
+                                   # or omitted: any agent. Names must be in the
+                                   # agent registry (claude, codex, cursor,
+                                   # gemini, opencode, pi)
   console:
     viewer: string               # advisory: "spice" | "vnc" | "native" — the
                                   # provider decides the actual mechanism it's
@@ -171,6 +176,7 @@ byte count. Must be positive; zero and negative sizes are rejected.
   `ParseSize`
 - Every `mounts[].hostPath` is non-empty; every `mounts[].guestPath`, when set,
   is absolute
+- Every `agents` entry names a known agent
 
 Everything else about a mount is checked at create/start time rather than at
 load time, because it depends on the instance name and the real filesystem —
@@ -296,6 +302,9 @@ profile with ad-hoc `create` flags:
   `allowHome` an explicit `false` anywhere in the chain wins over a later
   `true`. This asymmetry is the point: a personal profile must not be able to
   unlock a directory an org profile ruled out.
+- `agents`: **not merged**. `create --agent` checks it against each
+  `--profile` on its own: the agent must be in the list of every profile
+  that declares one, and the error names the first profile that refuses it
 
 ## The Spec document (`create --spec=<file>`)
 
@@ -314,5 +323,6 @@ spec:
                           # top of the named profiles via Merge
 ```
 
-`overrides` is validated with the same rules as a profile's `spec`, and its
+`overrides` is validated with the same rules as a profile's `spec` (except
+that it may not set `agents`, which only a profile can declare), and its
 `network.allowFile`, if set, is resolved against the spec file's directory.
