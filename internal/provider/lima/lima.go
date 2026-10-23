@@ -102,6 +102,9 @@ func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*pro
 		if err := checkDNSPolicy(spec.Overrides.DNS); err != nil {
 			return nil, err
 		}
+		if err := checkLoopbackPorts(spec.Overrides); err != nil {
+			return nil, err
+		}
 	}
 	if _, _, err := p.run(ctx, buildCreateArgs(spec)...); err != nil {
 		return nil, err
@@ -327,6 +330,9 @@ func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy p
 		return p.err(provider.FeatureNetworkACL)
 	}
 	if err := checkDNSPolicy(policy.DNS); err != nil {
+		return err
+	}
+	if err := checkLoopbackPorts(policy); err != nil {
 		return err
 	}
 	// Confined first, then the policy: if writing the policy fails, the

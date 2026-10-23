@@ -557,3 +557,17 @@ func contains(args []string, want string) bool {
 	}
 	return false
 }
+
+// A loopback literal names the guest itself on Incus, so it's refused,
+// with the reason, rather than dropped or turned into an ACL rule.
+func TestCheckLoopbackRules(t *testing.T) {
+	for _, domain := range []string{"127.0.0.1", "::1", "[::1]"} {
+		err := checkLoopbackRules(provider.NetworkPolicy{DenyLAN: true, Allow: []provider.AllowRule{{Domain: domain, Ports: []int{8081}}}})
+		if err == nil || !strings.Contains(err.Error(), "own network namespace") || !strings.Contains(err.Error(), "Incus bridge") {
+			t.Errorf("%s: error = %v, want the backend-specific refusal", domain, err)
+		}
+	}
+	if err := checkLoopbackRules(provider.NetworkPolicy{Allow: []provider.AllowRule{{Domain: "10.20.30.40", Ports: []int{8081}}, {Domain: "pypi.org"}}}); err != nil {
+		t.Errorf("non-loopback rules: %v", err)
+	}
+}

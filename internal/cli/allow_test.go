@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -240,7 +241,8 @@ func TestCLI_Create_LANLiteralErrors(t *testing.T) {
 		{[]string{"--allow=10.20.30.40"}, `allow entry "10.20.30.40" is a LAN address: list the port(s) you need (e.g. 10.20.30.40:8080); deny-LAN permits a LAN host only on listed ports`},
 		{[]string{"--allow-file=" + allowFile}, `allow entry "10.20.30.40" is a LAN address`},
 		{[]string{"--allow=169.254.169.254:80"}, "link-local"},
-		{[]string{"--allow=127.0.0.1:8080"}, "loopback"},
+		{[]string{"--allow=127.0.0.1"}, `allow entry "127.0.0.1" is a loopback address: list the port(s) of the one host service you need (e.g. 127.0.0.1:8081)`},
+		{[]string{"--allow=127.0.0.1", "--allow-lan"}, `allow entry "127.0.0.1" is a loopback address`},
 	} {
 		p := &capturingProvider{Provider: fake.New()}
 		out, err := executeWith(t, p, append([]string{"create", "demo", "--image=ubuntu"}, c.args...)...)
@@ -250,5 +252,66 @@ func TestCLI_Create_LANLiteralErrors(t *testing.T) {
 		if p.lastCreateSpec.Name != "" {
 			t.Errorf("create %v reached the provider, want it refused first", c.args)
 		}
+	}
+}
+
+const loopbackNotice = "agentctl: allow entry 127.0.0.1:8081 is a loopback address; the sandbox can reach that one service on this machine, and nothing else on it; the guest's no_proxy is adjusted so ordinary clients reach it.\n"
+
+// A loopback literal with a port reaches that one host service; create
+// says so once, including that the guest's no_proxy is adjusted for it,
+// under either deny-LAN setting, and only when it would.
+func TestCLI_Create_LoopbackLiteralNotice(t *testing.T) {
+	useIsolatedConfig(t)
+	for _, extra := range [][]string{nil, {"--allow-lan"}} {
+		p := &capturingProvider{Provider: fake.New()}
+		args := append([]string{"create", "demo", "--image=ubuntu", "--allow=127.0.0.1:8081", "--allow=127.0.0.1:8081"}, extra...)
+		out, err := executeWith(t, p, args...)
+		if err != nil {
+			t.Fatalf("%v: %v (%s)", args, err, out)
+		}
+		if n := strings.Count(out, loopbackNotice); n != 1 {
+			t.Errorf("%v: output has the loopback notice %d times, want once:\n%s", args, n, out)
+		}
+		if r, ok := ruleFor(p.lastCreateSpec.Overrides.Allow, "127.0.0.1"); !ok || !reflect.DeepEqual(r.Ports, []int{8081}) {
+			t.Errorf("%v: allowlist %+v, want 127.0.0.1:8081 passed through", args, p.lastCreateSpec.Overrides.Allow)
+		}
+	}
+
+	for _, args := range [][]string{
+		{"--output=json", "create", "demo2", "--image=ubuntu", "--allow=127.0.0.1:8081"},
+		{"--preview", "create", "demo3", "--image=ubuntu", "--allow=127.0.0.1:8081"},
+	} {
+		out, err := executeWith(t, previewingFake{fake.New()}, args...)
+		if err != nil {
+			t.Fatalf("%v: %v (%s)", args, err, out)
+		}
+		if strings.Contains(out, "is a loopback address") {
+			t.Errorf("%v printed a loopback notice, want none:\n%s", args, out)
+		}
+	}
+}
+
+// On Incus a loopback entry would name the guest itself, so create
+// refuses it, saying why, before the provider sees anything.
+func TestCLI_Create_LoopbackLiteralRefusedOnIncus(t *testing.T) {
+	useIsolatedConfig(t)
+	p := &capturingProvider{Provider: fake.New()}
+	reg := provider.NewRegistry()
+	reg.Register("incus", func() (provider.Provider, error) { return p, nil })
+	root := NewRootCmd(reg)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"--provider", "incus", "create", "demo", "--image=images:ubuntu/24.04", "--allow=127.0.0.1:8081"})
+	err := root.Execute()
+	want := "allow entry 127.0.0.1:8081 is a loopback address, which the Incus backend refuses: an Incus guest has its own network namespace, so 127.0.0.1 inside it is the guest itself, not this machine."
+	if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "Incus bridge") {
+		t.Fatalf("create on incus: error = %v, want it to contain %q and point at the bridge address (%s)", err, want, out.String())
+	}
+	if p.lastCreateSpec.Name != "" {
+		t.Error("create reached the provider, want it refused first")
+	}
+	if strings.Contains(out.String(), "the sandbox can reach that one service") {
+		t.Errorf("printed the Lima loopback notice on Incus:\n%s", out.String())
 	}
 }

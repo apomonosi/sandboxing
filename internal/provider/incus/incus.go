@@ -74,6 +74,12 @@ func (p *Provider) run(ctx context.Context, args ...string) ([]byte, []byte, err
 }
 
 func (p *Provider) Create(ctx context.Context, spec provider.InstanceSpec) (*provider.Instance, error) {
+	// Refuse a policy this backend can't honour before creating anything.
+	if !spec.Overrides.Unrestricted {
+		if err := checkLoopbackRules(spec.Overrides); err != nil {
+			return nil, err
+		}
+	}
 	if _, _, err := p.run(ctx, append([]string{"init"}, buildInitArgs(spec)...)...); err != nil {
 		return nil, err
 	}
@@ -514,6 +520,9 @@ func (p *Provider) SnapshotDelete(ctx context.Context, name, snapshotName string
 // doc comment on networkACLCommands) and applies the resulting Incus
 // network ACL, replacing any previous one for this instance.
 func (p *Provider) ApplyNetworkPolicy(ctx context.Context, name string, policy provider.NetworkPolicy) error {
+	if err := checkLoopbackRules(policy); err != nil {
+		return err
+	}
 	resolved := resolveAllowRules(policy.Allow)
 	for _, line := range denyLANDrops(policy, resolved) {
 		fmt.Fprintln(os.Stderr, "agentctl: incus: "+line)

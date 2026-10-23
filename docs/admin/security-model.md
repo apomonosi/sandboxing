@@ -76,6 +76,19 @@ agentctl checks after every start that a direct connection out from the
 guest fails, stopping the instance if it doesn't. Details and trade-offs:
 [Lima setup](providers/lima-setup.md#network-policy-enforcement).
 
+One exception reaches the host itself: on Lima, an allow entry written as
+`127.0.0.1:<port>` (or `[::1]:<port>`) lets the sandbox connect to that
+port on the Mac's loopback, because the proxy dials from the host. That
+means trusting whatever listens there with input from the sandbox, the
+same way a LAN `host:port` entry trusts that host; a service that can
+read files, run commands, or proxy onward is reachable to the agent as far
+as that service allows. The exception is explicit, port-scoped and never a
+default: a portless loopback entry, other loopback addresses and hostnames
+that resolve to loopback stay refused, as do the ports agentctl pins for
+any instance's SSH forward and egress proxy, so a sandbox can't talk to
+its own cage or another sandbox's. Incus refuses loopback entries
+outright, since there `127.0.0.1` would mean the guest.
+
 The one way around it is not starting the instance through agentctl: a
 plain `limactl start`, or launchd via `limactl autostart`, runs the
 instance with unrestricted egress. agentctl refuses to start an instance

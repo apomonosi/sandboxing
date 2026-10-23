@@ -76,8 +76,33 @@ the ports it lists; "any port" on a LAN host isn't a narrow exception, so
 `create` refuses it rather than letting it fail later. List the host:port as
 an IP literal — `--allow=10.20.30.40:8080` — or, if you really want the
 whole LAN on any port, pass `--allow-lan`. A link-local (`169.254.x.x`,
-`fe80::`) or loopback address is refused the same way whatever its ports:
-deny-LAN never opens those.
+`fe80::`) address is refused the same way whatever its ports: deny-LAN
+never opens those. A loopback address is the one service on this machine,
+and needs its ports too: `--allow=127.0.0.1:8081` (Lima only).
+
+## Lima: a service on my Mac times out from the sandbox
+
+`curl http://192.168.5.2:8081/` from inside the guest hangs until it
+times out, even though `curl http://127.0.0.1:8081/` on the Mac answers at
+once. `192.168.5.2` is the host as the guest sees it, but in a confined
+instance it leads only to agentctl's own SSH forward and egress proxy; the
+Mac has no interface with that address, so the proxy can't reach it
+either. The Mac's LAN address can get through but come back with an empty
+reply when the macOS firewall blocks incoming connections
+(`socketfilterfw --getglobalstate` reports "blocking all non-essential
+incoming connections"). Allow the service
+on loopback instead, `--allow=127.0.0.1:8081` (see
+[Egress allowlist](profiles-and-policies.md#egress-allowlist)); inside the
+guest, `curl http://127.0.0.1:8081/` then reaches it through the proxy,
+since agentctl leaves `127.0.0.1` out of the guest's `no_proxy`. If a
+client still gets "Connection refused" from `127.0.0.1`, it is bypassing
+the proxy: check it honours `http_proxy`, and that nothing in the guest
+puts `127.0.0.1` back into `no_proxy`. On Incus, loopback entries are
+refused; use the host's bridge address.
+
+The same change means a proxy-honouring client in the guest sends every
+`127.0.0.1` request to the proxy, so a service running *inside* the guest
+on another port gets a `403` there: reach it as `localhost` instead.
 
 ## Nothing in the sandbox can reach the network / `curl` fails during an agent install
 

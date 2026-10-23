@@ -146,8 +146,9 @@ func TestBlockedReason(t *testing.T) {
 }
 
 // An explicit IP-literal allow rule (see permitsLiteral) opens a private
-// address under deny-LAN, and nothing else: link-local, loopback and the
-// other always-refused ranges stay refused.
+// address under deny-LAN, and 127.0.0.1 or ::1, and nothing else:
+// link-local, other loopback spellings and the other always-refused ranges
+// stay refused.
 func TestBlockedReason_Explicit(t *testing.T) {
 	denyLAN := Policy{DenyLAN: true}
 	cases := []struct {
@@ -163,10 +164,16 @@ func TestBlockedReason_Explicit(t *testing.T) {
 		{"::ffff:192.168.1.1", true, false, ""},
 		{"169.254.169.254", true, true, "link-local"},
 		{"fe80::1", true, true, "link-local"},
-		{"127.0.0.1", true, true, "loopback"},
-		{"::1", true, true, "loopback"},
+		{"127.0.0.1", true, false, ""},
+		{"::1", true, false, ""},
+		{"::ffff:127.0.0.1", true, false, ""},
+		{"127.0.0.2", true, true, "loopback"},
+		{"64:ff9b::7f00:1", true, true, "loopback"}, // NAT64 spelling of 127.0.0.1
 		{"0.0.0.0", true, true, "unspecified"},
+		{"::", true, true, "unspecified"},
 		{"224.0.0.1", true, true, "multicast"},
+		{"ff02::1", true, true, "multicast"},
+		{"255.255.255.255", true, true, "broadcast"},
 	}
 	for _, c := range cases {
 		ip := net.ParseIP(c.ip)
@@ -179,6 +186,49 @@ func TestBlockedReason_Explicit(t *testing.T) {
 		}
 		if !strings.Contains(r, c.wantExplicitWords) {
 			t.Errorf("blocked(%s, explicit=true) reason %q, want it to mention %q", c.ip, r, c.wantExplicitWords)
+		}
+	}
+}
+
+// A loopback literal with its ports listed reaches that one host service,
+// under either deny-LAN setting; nothing else about loopback opens.
+func TestPolicy_LoopbackLiteral(t *testing.T) {
+	for _, denyLAN := range []bool{true, false} {
+		pol := Policy{DenyLAN: denyLAN, Allow: []AllowRule{
+			{Domain: "127.0.0.1", Ports: []int{8081}},
+			{Domain: "[::1]", Ports: []int{8081}},
+			{Domain: "127.0.0.1"}, // no ports: never an opening
+			{Domain: "llama.example", Ports: []int{8081}},
+		}}
+		if err := pol.validateAndNormalize(); err != nil {
+			t.Fatalf("validateAndNormalize: %v", err)
+		}
+		cases := []struct {
+			host string
+			port int
+			want bool
+		}{
+			{"127.0.0.1", 8081, true},
+			{"[::1]", 8081, true},
+			{"::1", 8081, true},
+			{"127.0.0.1", 22, false},       // unlisted port, despite the portless rule
+			{"[::1]", 22, false},           // likewise for IPv6
+			{"llama.example", 8081, false}, // a domain resolving to loopback
+		}
+		for _, c := range cases {
+			h := normalizeHost(c.host)
+			explicit := pol.permitsLiteral(h, c.port)
+			ip := net.ParseIP(h)
+			if ip == nil {
+				ip = net.ParseIP("127.0.0.1") // what llama.example resolves to
+			}
+			reason := pol.blockedReason(ip, explicit)
+			if got := pol.permits(h, c.port) && reason == ""; got != c.want {
+				t.Errorf("DenyLAN=%v: %s:%d permitted = %v, want %v (reason %q)", denyLAN, c.host, c.port, got, c.want, reason)
+			}
+			if !c.want && !strings.Contains(reason, "loopback") {
+				t.Errorf("DenyLAN=%v: %s:%d reason %q, want it to mention loopback", denyLAN, c.host, c.port, reason)
+			}
 		}
 	}
 }

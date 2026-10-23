@@ -29,10 +29,15 @@ import (
 //     reachable on any port whether or not an allow rule names them, the
 //     way Incus adds explicit allow rules for the private ranges.
 //
-// On top of that, loopback, unspecified, multicast, and broadcast
-// destinations are refused unconditionally: the proxy runs on the host, so
-// unlike an Incus guest (whose loopback is its own), a proxied connection
-// to 127.0.0.1 would reach the host's own services.
+// On top of that, unspecified, multicast, and broadcast destinations are
+// refused unconditionally, and so is loopback with one exception: the
+// proxy runs on the host, so unlike an Incus guest (whose loopback is its
+// own), a proxied connection to 127.0.0.1 reaches the host's own services.
+// That is refused unless the request names 127.0.0.1 or ::1 itself and an
+// allow rule lists that literal with the port (see permitsLiteral), under
+// either DenyLAN setting: a rule like 127.0.0.1:8081 opens that one host
+// service and nothing else. A hostname that resolves to loopback stays
+// refused.
 type Policy struct {
 	DenyLAN bool        `json:"denyLAN"`
 	Allow   []AllowRule `json:"allow"`
@@ -190,11 +195,15 @@ func isLAN(ip net.IP) bool {
 // connection time, so a name that later starts resolving into the LAN
 // (DNS rebinding) is refused too. explicit says the request named ip as a
 // literal that an allow rule lists with this port (see permitsLiteral);
-// under DenyLAN that opens a private address, and nothing else.
+// that opens 127.0.0.1 or ::1, and under DenyLAN a private address, and
+// nothing else.
 func (p Policy) blockedReason(ip net.IP, explicit bool) string {
+	// Checked before canonicalIP, so a NAT64 spelling of 127.0.0.1 doesn't
+	// count as naming it.
+	hostLoopback := explicit && (ip.Equal(net.IPv4(127, 0, 0, 1)) || ip.Equal(net.IPv6loopback))
 	ip = canonicalIP(ip)
 	switch {
-	case ip.IsLoopback():
+	case ip.IsLoopback() && !hostLoopback:
 		return "loopback address (would reach the host itself)"
 	case ip.IsUnspecified() || inAny(ip, thisNetwork):
 		return "unspecified address (would reach the host itself)"

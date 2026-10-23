@@ -286,7 +286,6 @@ func TestCheckLANLiterals(t *testing.T) {
 		{AllowRule{Domain: "fd00::5"}, `(e.g. [fd00::5]:8080)`},
 		{AllowRule{Domain: "169.254.169.254", Ports: []int{80}}, "link-local"},
 		{AllowRule{Domain: "fe80::1", Ports: []int{80}}, "link-local"},
-		{AllowRule{Domain: "127.0.0.1", Ports: []int{8080}}, "loopback"},
 	} {
 		_, err := CheckLANLiterals([]AllowRule{c.rule}, true)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -297,5 +296,36 @@ func TestCheckLANLiterals(t *testing.T) {
 	// Without deny-LAN, nothing is checked or announced.
 	if got, err := CheckLANLiterals([]AllowRule{{Domain: "10.20.30.40"}, {Domain: "169.254.169.254"}}, false); err != nil || got != nil {
 		t.Errorf("CheckLANLiterals without deny-LAN = %q, %v; want nil, nil", got, err)
+	}
+}
+
+func TestCheckLoopbackLiterals(t *testing.T) {
+	rules := []AllowRule{
+		{Domain: "pypi.org", Ports: []int{443}},
+		{Domain: "10.20.30.40", Ports: []int{8080}},
+		{Domain: "127.0.0.1", Ports: []int{8081}},
+		{Domain: "[::1]", Ports: []int{8081, 8082}},
+		{Domain: "127.0.0.1", Ports: []int{8081}}, // listed twice, announced once
+	}
+	got, err := CheckLoopbackLiterals(rules)
+	if err != nil {
+		t.Fatalf("CheckLoopbackLiterals: %v", err)
+	}
+	if want := []string{"127.0.0.1:8081", "[::1]:8081,8082"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("CheckLoopbackLiterals = %q, want %q", got, want)
+	}
+
+	for _, c := range []struct {
+		rule AllowRule
+		want string
+	}{
+		{AllowRule{Domain: "127.0.0.1"}, `allow entry "127.0.0.1" is a loopback address: list the port(s) of the one host service you need (e.g. 127.0.0.1:8081); a loopback entry is permitted only on listed ports`},
+		{AllowRule{Domain: "::1"}, `(e.g. [::1]:8081)`},
+		{AllowRule{Domain: "127.0.0.2", Ports: []int{8081}}, "other than 127.0.0.1 or ::1"},
+	} {
+		_, err := CheckLoopbackLiterals([]AllowRule{c.rule})
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("CheckLoopbackLiterals(%+v) error = %v, want it to contain %q", c.rule, err, c.want)
+		}
 	}
 }

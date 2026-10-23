@@ -77,6 +77,20 @@ func denyLANDropReason(rule provider.AllowRule, addr string) string {
 	return ""
 }
 
+// checkLoopbackRules refuses an allow rule written as a loopback literal.
+// The Lima backend honours 127.0.0.1:<port> because its egress proxy dials
+// from the host; an Incus guest has its own network namespace, so the
+// same entry would name the guest itself, and allowing it would only
+// mislead. Refused under any deny-LAN setting, rather than dropped.
+func checkLoopbackRules(policy provider.NetworkPolicy) error {
+	for _, rule := range policy.Allow {
+		if ip := net.ParseIP(strings.Trim(rule.Domain, "[]")); ip != nil && ip.IsLoopback() {
+			return fmt.Errorf("allow entry %q is a loopback address, which the Incus backend refuses: an Incus guest has its own network namespace, so 127.0.0.1 inside it is the guest itself, not this machine. To reach a service on the host, bind it to the host's address on the Incus bridge (`incus network get incusbr0 ipv4.address`) and allow that address with its port instead", rule.Domain)
+		}
+	}
+	return nil
+}
+
 // denyLANDrops lists, one line per address, what networkACLCommands will
 // leave out of the ACL under --deny-lan, for ApplyNetworkPolicy to report.
 func denyLANDrops(policy provider.NetworkPolicy, resolvedAllowIPs map[string][]string) []string {

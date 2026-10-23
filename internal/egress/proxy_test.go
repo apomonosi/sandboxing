@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -336,6 +337,50 @@ func TestProxy_DenyLAN_ExplicitLANLiteral(t *testing.T) {
 	}
 	if got := f.net.dialedAddrs(); len(got) != 1 || got[0] != "10.20.30.40:8080" {
 		t.Errorf("dialed %v, want only 10.20.30.40:8080", got)
+	}
+}
+
+// TestProxy_ExplicitLoopbackLiteral: an allow rule written as 127.0.0.1
+// with its port opens exactly that service on the host, under either
+// deny-LAN setting. Another port on the same address (even with a
+// portless rule for it), and a name that resolves to loopback, stay
+// refused with the loopback reason.
+func TestProxy_ExplicitLoopbackLiteral(t *testing.T) {
+	service := startEcho(t) // a real service on this machine's loopback
+	_, portStr, _ := net.SplitHostPort(service)
+	port, _ := strconv.Atoi(portStr)
+	for _, denyLAN := range []bool{true, false} {
+		f := newProxyFixture(t, allowPolicy(denyLAN,
+			AllowRule{Domain: "127.0.0.1", Ports: []int{port}},
+			AllowRule{Domain: "127.0.0.1"},
+			AllowRule{Domain: "loop.example", Ports: []int{port}},
+		))
+		f.net.mu.Lock()
+		f.net.routes[service] = service
+		f.net.mu.Unlock()
+
+		resp, c, br := f.connect(t, service)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("deny-LAN=%v: listed loopback literal: status = %d, want 200", denyLAN, resp.StatusCode)
+		}
+		fmt.Fprint(c, "ping\n")
+		if line, err := br.ReadString('\n'); err != nil || line != "ping\n" {
+			t.Fatalf("deny-LAN=%v: echo through tunnel = %q, %v; want \"ping\\n\"", denyLAN, line, err)
+		}
+
+		for _, target := range []string{"127.0.0.1:443", net.JoinHostPort("loop.example", portStr)} {
+			resp, _, _ := f.connect(t, target)
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("deny-LAN=%v: CONNECT %s: status = %d, want 403", denyLAN, target, resp.StatusCode)
+			}
+			if want := "127.0.0.1 is a loopback address (would reach the host itself)"; !strings.Contains(string(body), want) {
+				t.Errorf("deny-LAN=%v: CONNECT %s: body %q, want it to contain %q", denyLAN, target, body, want)
+			}
+		}
+		if got := f.net.dialedAddrs(); len(got) != 1 || got[0] != service {
+			t.Errorf("deny-LAN=%v: dialed %v, want only %s", denyLAN, got, service)
+		}
 	}
 }
 

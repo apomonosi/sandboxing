@@ -57,7 +57,7 @@ func (p *Provider) PreviewStart(name string) []provider.Command {
 		return nil
 	}
 	return []provider.Command{
-		cmd(buildNetworkEditArgs(name, plan.SSHPort, plan.ProxyPort)),
+		cmd(buildNetworkEditArgs(name, plan.SSHPort, plan.ProxyPort, plan.NoProxy)),
 		plan.Proxy,
 		{Binary: sandboxExecBinary, Args: buildConfinedStartArgs(name, plan.SSHPort, plan.ProxyPort)},
 		cmd(buildEgressProbeArgs(name)),

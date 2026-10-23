@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -1011,7 +1012,7 @@ func TestBuildConfinedStartArgs(t *testing.T) {
 }
 
 func TestBuildNetworkEditArgs(t *testing.T) {
-	got := buildNetworkEditArgs("demo", 50001, 50002)
+	got := buildNetworkEditArgs("demo", 50001, 50002, guestNoProxy(egress.Policy{}))
 	want := []string{"edit", "--tty=false", "--start=false",
 		"--set", ".networks = []",
 		"--set", ".ssh.localPort = 50001",
@@ -1200,6 +1201,142 @@ func TestDNSPolicy_RefusedOnLima(t *testing.T) {
 			if _, err := p.Create(ctx, provider.InstanceSpec{Name: "demo", Image: "template://ubuntu-lts",
 				Overrides: provider.NetworkPolicy{DNS: dns, Unrestricted: true}}); err != nil {
 				t.Errorf("Create(unrestricted) err = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestLoopbackRule_RefusesAgentctlsOwnPorts: a loopback allow entry may
+// name a host service, but never the SSH forward or egress proxy agentctl
+// pinned for this instance or another — the sandbox would be talking to
+// its own cage, or someone else's.
+func TestLoopbackRule_RefusesAgentctlsOwnPorts(t *testing.T) {
+	fl := newFakeLima()
+	p, _ := newTestProvider(t, fl, true)
+	ctx := context.Background()
+	if err := p.Start(ctx, "demo"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	st := mustState(t, "demo")
+	loopback := func(port int) provider.NetworkPolicy {
+		return provider.NetworkPolicy{DenyLAN: true, Allow: []provider.AllowRule{{Domain: "127.0.0.1", Ports: []int{8081, port}}}}
+	}
+
+	for port, what := range map[int]string{st.SSHLocalPort: `instance "demo"'s SSH forward`, st.EgressProxyPort: `instance "demo"'s egress proxy`} {
+		err := p.ApplyNetworkPolicy(ctx, "demo", loopback(port))
+		want := fmt.Sprintf("allow entry 127.0.0.1:%d: port %d belongs to the sandbox's own plumbing (%s)", port, port, what)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ApplyNetworkPolicy naming port %d: err = %v, want it to contain %q", port, err, want)
+		}
+
+		// Another instance's create is refused too, before limactl runs.
+		calls := len(fl.calls)
+		_, err = p.Create(ctx, provider.InstanceSpec{Name: "other", Image: "template://ubuntu-lts", Overrides: loopback(port)})
+		if err == nil || !strings.Contains(err.Error(), "belongs to the sandbox's own plumbing") {
+			t.Errorf("Create naming demo's port %d: err = %v, want the plumbing refusal", port, err)
+		}
+		if len(fl.calls) != calls {
+			t.Errorf("Create ran %v before refusing", fl.calls[calls:])
+		}
+	}
+
+	// A service port is fine, and is what the proxy is told to enforce.
+	if err := p.ApplyNetworkPolicy(ctx, "demo", provider.NetworkPolicy{DenyLAN: true, Allow: []provider.AllowRule{{Domain: "127.0.0.1", Ports: []int{8081}}}}); err != nil {
+		t.Fatalf("ApplyNetworkPolicy 127.0.0.1:8081: %v", err)
+	}
+	paths, _ := egressPathsFor("demo")
+	if pol, err := egress.LoadPolicy(paths.Policy); err != nil || len(pol.Allow) != 1 || pol.Allow[0].Domain != "127.0.0.1" {
+		t.Errorf("recorded policy = %+v, %v; want the loopback rule", pol, err)
+	}
+}
+
+// A port a loopback rule opens is never pinned for the SSH forward or the
+// proxy later, so the refusal above can't be sidestepped by ordering.
+func TestLoopbackRule_PortIsNeverPinned(t *testing.T) {
+	fl := newFakeLima()
+	p, _ := newTestProvider(t, fl, true)
+	ctx := context.Background()
+	first, second, err := pickPorts("demo", &stateFile{Instances: map[string]instanceState{}}, func(int) bool { return true }, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.ApplyNetworkPolicy(ctx, "demo", provider.NetworkPolicy{DenyLAN: true, Allow: []provider.AllowRule{{Domain: "[::1]", Ports: []int{first, second}}}}); err != nil {
+		t.Fatalf("ApplyNetworkPolicy: %v", err)
+	}
+	if err := p.Start(ctx, "demo"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	st := mustState(t, "demo")
+	for _, port := range []int{st.SSHLocalPort, st.EgressProxyPort} {
+		if port == first || port == second {
+			t.Errorf("pinned port %d, which the instance's loopback rule opens", port)
+		}
+	}
+}
+
+// guestNoProxy leaves out of no_proxy exactly the loopback literals a rule
+// opens, keeps localhost always, and is today's value otherwise.
+func TestGuestNoProxy(t *testing.T) {
+	rule := func(domain string, ports ...int) egress.AllowRule {
+		return egress.AllowRule{Domain: domain, Ports: ports}
+	}
+	for _, c := range []struct {
+		name  string
+		allow []egress.AllowRule
+		want  string
+	}{
+		{"no loopback rule", []egress.AllowRule{rule("pypi.org", 443), rule("10.20.30.40", 8080)}, "localhost,127.0.0.1,::1"},
+		{"no rules at all", nil, "localhost,127.0.0.1,::1"},
+		{"127.0.0.1", []egress.AllowRule{rule("pypi.org", 443), rule("127.0.0.1", 8081)}, "localhost,::1"},
+		{"::1", []egress.AllowRule{rule("::1", 8081)}, "localhost,127.0.0.1"},
+		{"both", []egress.AllowRule{rule("127.0.0.1", 8081), rule("::1", 8081, 8082)}, "localhost"},
+		{"portless rule opens nothing", []egress.AllowRule{rule("127.0.0.1")}, "localhost,127.0.0.1,::1"},
+		{"localhost rule", []egress.AllowRule{rule("localhost", 8081)}, "localhost,127.0.0.1,::1"},
+	} {
+		if got := guestNoProxy(egress.Policy{DenyLAN: true, Allow: c.allow}); got != c.want {
+			t.Errorf("%s: guestNoProxy = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// End to end through a confined start: the recorded policy decides the
+// guest's no_proxy, both spellings agree, nothing else in the proxy
+// environment changes, and checkConfinable accepts the result.
+func TestConfinedStart_LoopbackRuleAdjustsNoProxy(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		allow []provider.AllowRule
+		want  string
+	}{
+		{"none", []provider.AllowRule{{Domain: "pypi.org", Ports: []int{443}}}, "localhost,127.0.0.1,::1"},
+		{"127.0.0.1", []provider.AllowRule{{Domain: "127.0.0.1", Ports: []int{8081}}}, "localhost,::1"},
+		{"both", []provider.AllowRule{{Domain: "127.0.0.1", Ports: []int{8081}}, {Domain: "[::1]", Ports: []int{8081}}}, "localhost"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fl := newFakeLima()
+			p, _ := newTestProvider(t, fl, true)
+			ctx := context.Background()
+			if _, err := p.Create(ctx, provider.InstanceSpec{Name: "demo", Image: "template://ubuntu-lts",
+				Overrides: provider.NetworkPolicy{DenyLAN: true, Allow: c.allow}}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			preview := p.PreviewStart("demo")
+			if err := p.Start(ctx, "demo"); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			for _, k := range []string{".env.no_proxy", ".env.NO_PROXY"} {
+				if got := fl.edits[k]; got != c.want {
+					t.Errorf("%s = %q, want %q", k, got, c.want)
+				}
+			}
+			url := "http://192.168.5.2:" + strconv.Itoa(mustState(t, "demo").EgressProxyPort)
+			for _, k := range []string{".env.http_proxy", ".env.https_proxy", ".env.HTTP_PROXY", ".env.HTTPS_PROXY"} {
+				if got := fl.edits[k]; got != url {
+					t.Errorf("%s = %q, want %q", k, got, url)
+				}
+			}
+			if want := fmt.Sprintf(".env.no_proxy = %q", c.want); !strings.Contains(strings.Join(preview[0].Args, " "), want) {
+				t.Errorf("PreviewStart's edit %v doesn't contain %s", preview[0].Args, want)
 			}
 		})
 	}

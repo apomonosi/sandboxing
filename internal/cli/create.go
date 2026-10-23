@@ -166,10 +166,17 @@ func newCreateCmd() *cobra.Command {
 
 			// Checked here rather than left to the backends, which would
 			// refuse these entries at run time with nothing said at create.
-			var lanEntries []string
+			var lanEntries, loopbackEntries []string
 			if !unrestricted {
 				lanEntries, err = profile.CheckLANLiterals(policy.Network.AllowRules(), policy.Network.DenyLAN)
 				if err != nil {
+					return err
+				}
+				loopbackEntries, err = profile.CheckLoopbackLiterals(policy.Network.AllowRules())
+				if err != nil {
+					return err
+				}
+				if err := checkLoopbackBackend(providerName, loopbackEntries); err != nil {
 					return err
 				}
 			}
@@ -199,6 +206,9 @@ func newCreateCmd() *cobra.Command {
 						which = "those ports"
 					}
 					fmt.Fprintf(w, "agentctl: allow entry %s is a LAN address; it is reachable on %s only, and deny-LAN stays on for the rest of the network.\n", e, which)
+				}
+				for _, e := range loopbackEntries {
+					fmt.Fprintf(w, "agentctl: allow entry %s is a loopback address; the sandbox can reach that one service on this machine, and nothing else on it; the guest's no_proxy is adjusted so ordinary clients reach it.\n", e)
 				}
 			}
 
@@ -250,7 +260,7 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&profiles, "profile", nil, "named security profile(s) to apply, in order (repeatable)")
 	// StringArray, not StringSlice, for --allow and --allow-file: a slice
 	// flag splits its value at commas, which would cut "host:80,443" in two.
-	cmd.Flags().StringArrayVar(&allow, "allow", nil, "egress allowlist entry: \"host[:port,port]\", \"*.domain[:ports]\", or an http(s):// URL (repeatable); an IP address in a private range with ports set is permitted even under --deny-lan")
+	cmd.Flags().StringArrayVar(&allow, "allow", nil, "egress allowlist entry: \"host[:port,port]\", \"*.domain[:ports]\", or an http(s):// URL (repeatable); an IP address in a private range with ports set is permitted even under --deny-lan; 127.0.0.1:<port> reaches that one service on this machine (Lima only)")
 	cmd.Flags().StringArrayVar(&allowFiles, "allow-file", nil, "file of egress allowlist entries, one --allow value per line, # for comments (repeatable)")
 	cmd.Flags().StringSliceVar(&allowPresets, "allow-preset", nil, "allow a built-in group of hosts (package sources, git hosts, coding agents): "+strings.Join(profile.PresetNames(), ", ")+" (repeatable; \"agentctl profile presets\" lists their hosts)")
 	cmd.Flags().BoolVar(&denyLAN, "deny-lan", true, "block egress to RFC1918/link-local ranges")
@@ -267,4 +277,17 @@ func newCreateCmd() *cobra.Command {
 	mounts.register(cmd)
 
 	return cmd
+}
+
+// checkLoopbackBackend refuses loopback allow entries on Incus, where they
+// can't mean what they say: an Incus guest has its own network namespace,
+// so 127.0.0.1 is the guest itself, not this machine. (The Incus provider
+// refuses them too; this says so before create does any work.) On Lima
+// the egress proxy dials from the host, so the entry reaches the host's
+// own service.
+func checkLoopbackBackend(providerName string, entries []string) error {
+	if providerName != "incus" || len(entries) == 0 {
+		return nil
+	}
+	return fmt.Errorf("allow entry %s is a loopback address, which the Incus backend refuses: an Incus guest has its own network namespace, so 127.0.0.1 inside it is the guest itself, not this machine. To reach a service on the host, bind it to the host's address on the Incus bridge (`incus network get incusbr0 ipv4.address`) and allow that address with its port instead", entries[0])
 }

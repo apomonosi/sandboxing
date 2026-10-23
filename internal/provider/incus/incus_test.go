@@ -503,3 +503,23 @@ func TestCreate_StartsAndStopsAroundBootstrap(t *testing.T) {
 		t.Errorf("expected the post-bootstrap stop to be forceful, got %v", fr.calls[stopIdx])
 	}
 }
+
+// Create refuses a loopback allow entry before running anything, and so
+// does ApplyNetworkPolicy; --no-network-policy enforces nothing, so there
+// it doesn't matter.
+func TestLoopbackLiteral_RefusedBeforeAnyCommand(t *testing.T) {
+	ctx := context.Background()
+	np := provider.NetworkPolicy{DenyLAN: true, Allow: []provider.AllowRule{{Domain: "127.0.0.1", Ports: []int{8081}}}}
+
+	fr := &fakeRunner{}
+	p := NewWithRunner(fr).(*Provider)
+	if _, err := p.Create(ctx, provider.InstanceSpec{Name: "demo", Image: "images:ubuntu/24.04", Overrides: np}); err == nil || !strings.Contains(err.Error(), "own network namespace") {
+		t.Errorf("Create err = %v, want the Incus loopback refusal", err)
+	}
+	if err := p.ApplyNetworkPolicy(ctx, "demo", np); err == nil || !strings.Contains(err.Error(), "own network namespace") {
+		t.Errorf("ApplyNetworkPolicy err = %v, want the Incus loopback refusal", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("ran %v before refusing", fr.calls)
+	}
+}

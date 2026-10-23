@@ -227,11 +227,11 @@ func ReadAllowFile(path string) ([]AllowRule, error) {
 // CheckLANLiterals checks allow rules against deny-LAN before a sandbox is
 // created. Under deny-LAN the backends honour exactly one kind of LAN
 // entry, an IP literal in a private range (RFC 1918, RFC 4193) with its
-// ports listed; a private literal without ports, and any loopback or
-// link-local literal, would be silently refused at run time, so they're
-// errors here instead. It returns the accepted private literals as
-// host:ports entries, once each, for the caller to announce. Without
-// deny-LAN it returns nothing.
+// ports listed; a private literal without ports, and any link-local
+// literal, would be silently refused at run time, so they're errors here
+// instead (loopback literals are CheckLoopbackLiterals' business). It
+// returns the accepted private literals as host:ports entries, once each,
+// for the caller to announce. Without deny-LAN it returns nothing.
 func CheckLANLiterals(rules []AllowRule, denyLAN bool) ([]string, error) {
 	if !denyLAN {
 		return nil, nil
@@ -244,8 +244,6 @@ func CheckLANLiterals(rules []AllowRule, denyLAN bool) ([]string, error) {
 			continue
 		}
 		switch {
-		case ip.IsLoopback():
-			return nil, fmt.Errorf("allow entry %q is a loopback address: it would reach the host itself, and is refused on every backend", r.Domain)
 		case ip.IsLinkLocalUnicast():
 			return nil, fmt.Errorf("allow entry %q is a link-local address: deny-LAN refuses link-local addresses (where cloud metadata services live) even when listed", r.Domain)
 		case !ip.IsPrivate():
@@ -257,17 +255,52 @@ func CheckLANLiterals(rules []AllowRule, denyLAN bool) ([]string, error) {
 			}
 			return nil, fmt.Errorf("allow entry %q is a LAN address: list the port(s) you need (e.g. %s:8080); deny-LAN permits a LAN host only on listed ports", r.Domain, example)
 		}
-		ports := make([]string, len(r.Ports))
-		for i, p := range r.Ports {
-			ports[i] = strconv.Itoa(p)
-		}
-		entry := net.JoinHostPort(r.Domain, strings.Join(ports, ","))
-		if !seen[entry] {
-			seen[entry] = true
-			entries = append(entries, entry)
-		}
+		entries = appendEntry(entries, seen, r)
 	}
 	return entries, nil
+}
+
+// CheckLoopbackLiterals checks allow rules written as loopback literals,
+// under any deny-LAN setting. The Lima backend's proxy, which runs on the
+// host, honours exactly one kind: 127.0.0.1 or ::1 with its ports listed,
+// which reaches that one service on the host. Without ports, or as any
+// other loopback address, the entry would be silently refused at run
+// time, so it's an error here instead. It returns the accepted entries as
+// host:ports, once each, for the caller to announce.
+func CheckLoopbackLiterals(rules []AllowRule) ([]string, error) {
+	var entries []string
+	seen := make(map[string]bool)
+	for _, r := range rules {
+		ip := net.ParseIP(strings.Trim(r.Domain, "[]"))
+		switch {
+		case ip == nil || !ip.IsLoopback():
+			continue
+		case !ip.Equal(net.IPv4(127, 0, 0, 1)) && !ip.Equal(net.IPv6loopback):
+			return nil, fmt.Errorf("allow entry %q is a loopback address other than 127.0.0.1 or ::1: name the host's service as 127.0.0.1:<port> or [::1]:<port>", r.Domain)
+		case len(r.Ports) == 0:
+			example := "127.0.0.1"
+			if ip.To4() == nil {
+				example = "[::1]"
+			}
+			return nil, fmt.Errorf("allow entry %q is a loopback address: list the port(s) of the one host service you need (e.g. %s:8081); a loopback entry is permitted only on listed ports", r.Domain, example)
+		}
+		entries = appendEntry(entries, seen, r)
+	}
+	return entries, nil
+}
+
+// appendEntry appends r to entries as host:ports unless seen already has it.
+func appendEntry(entries []string, seen map[string]bool, r AllowRule) []string {
+	ports := make([]string, len(r.Ports))
+	for i, p := range r.Ports {
+		ports[i] = strconv.Itoa(p)
+	}
+	entry := net.JoinHostPort(strings.Trim(r.Domain, "[]"), strings.Join(ports, ","))
+	if seen[entry] {
+		return entries
+	}
+	seen[entry] = true
+	return append(entries, entry)
 }
 
 // ResolvePath expands a leading "~" in p to the user's home directory, and
