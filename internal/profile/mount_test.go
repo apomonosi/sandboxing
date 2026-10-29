@@ -339,3 +339,71 @@ func TestResolveMounts_RejectsNonDirectory(t *testing.T) {
 		t.Error("ResolveMounts accepted a regular file as a mount source, want an error")
 	}
 }
+
+// One profile, several instances, each with its own folder under one
+// parent: "{{.Name}}" in allowedRoots is what stops one instance mounting
+// a sibling's folder without listing every folder by hand.
+func TestResolveMounts_AllowedRootExpandsInstanceName(t *testing.T) {
+	withHome(t)
+	parent := t.TempDir()
+	own := filepath.Join(parent, "demo", "src")
+	sibling := filepath.Join(parent, "other", "src")
+	for _, dir := range []string{own, sibling} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+	}
+	policy := MountPolicy{AllowedRoots: []string{filepath.Join(parent, "{{.Name}}")}}
+
+	if _, err := ResolveMounts([]Mount{{HostPath: own, GuestPath: "/workspace"}}, "demo", policy); err != nil {
+		t.Errorf("ResolveMounts rejected the instance's own folder: %v", err)
+	}
+
+	_, err := ResolveMounts([]Mount{{HostPath: sibling, GuestPath: "/workspace"}}, "demo", policy)
+	if err == nil {
+		t.Fatal("ResolveMounts accepted a sibling instance's folder, want an error")
+	}
+	// The refusal must name the folder this instance was allowed, not the
+	// template that produced it.
+	if !strings.Contains(err.Error(), filepath.Join(parent, "demo")) || strings.Contains(err.Error(), "{{") {
+		t.Errorf("error = %v, want it to show the expanded root %s", err, filepath.Join(parent, "demo"))
+	}
+}
+
+func TestResolveMounts_AllowedRootExpandsHomeAndInstanceName(t *testing.T) {
+	home := withHome(t)
+	own := filepath.Join(home, "agentctl", "work", "demo", "src")
+	sibling := filepath.Join(home, "agentctl", "work", "other")
+	for _, dir := range []string{own, sibling} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll %s: %v", dir, err)
+		}
+	}
+	policy := MountPolicy{AllowedRoots: []string{"~/agentctl/work/{{.Name}}"}}
+
+	if _, err := ResolveMounts([]Mount{{HostPath: "~/agentctl/work/{{.Name}}/src", GuestPath: "/workspace"}}, "demo", policy); err != nil {
+		t.Errorf("ResolveMounts rejected the instance's own folder: %v", err)
+	}
+	if _, err := ResolveMounts([]Mount{{HostPath: sibling, GuestPath: "/workspace"}}, "demo", policy); err == nil {
+		t.Error("ResolveMounts accepted a sibling instance's folder, want an error")
+	}
+}
+
+// An entry without the placeholder is a literal root, whatever the
+// instance is called.
+func TestResolveMounts_AllowedRootWithoutPlaceholderIgnoresName(t *testing.T) {
+	withHome(t)
+	parent := t.TempDir()
+	sibling := filepath.Join(parent, "other", "src")
+	if err := os.MkdirAll(sibling, 0o700); err != nil {
+		t.Fatalf("MkdirAll %s: %v", sibling, err)
+	}
+
+	if _, err := ResolveMounts(
+		[]Mount{{HostPath: sibling, GuestPath: "/workspace"}},
+		"demo",
+		MountPolicy{AllowedRoots: []string{parent}},
+	); err != nil {
+		t.Errorf("ResolveMounts rejected a path under a literal root: %v", err)
+	}
+}

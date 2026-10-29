@@ -253,6 +253,22 @@ spec:
     createMissing: true
 ```
 
+An `allowedRoots` entry may contain `{{.Name}}`, expanded to the instance name
+at `create` and at `start --mount`. When several instances run from one
+profile, each with its own folder under one parent, this confines each to its
+own:
+
+```yaml
+spec:
+  mountPolicy:
+    allowedRoots: ["~/agentctl/work/{{.Name}}"]   # an instance may mount only the folder named after it
+```
+
+`pi-local01` may then mount `~/agentctl/work/pi-local01/src` but not
+`~/agentctl/work/pi-local02/`. That beats listing every folder: a list has to
+be kept in step with the instances, and every instance on it may still mount
+every other instance's folder.
+
 Credentials directories (`~/.ssh`, `~/.aws`, `~/.kube`, …) and the backends'
 own state directories are refused regardless of configuration — see the
 [Profile Schema](../reference/profile-schema.md#mount-policy) for the full

@@ -51,7 +51,8 @@ spec:
       writable: bool             # default false (read-only), matching Lima
   mountPolicy:                    # constrains which host directories may be
                                    # mounted at all; see "Mount policy" below
-    allowedRoots: [string]        # every mount must resolve under one of these
+    allowedRoots: [string]        # every mount must resolve under one of these;
+                                   # "~" and "{{.Name}}" expand as in hostPath
     denyPaths: [string]           # never mountable, even under an allowed root
     allowHome: bool               # default false; permits mounting $HOME itself
     createMissing: bool           # default false; mkdir 0700 a missing hostPath
@@ -255,8 +256,17 @@ interpreted. For each mount, in order:
    escapes the sandbox without ever attacking the VM boundary.
 7. `denyPaths` is applied on top.
 8. If `allowedRoots` is non-empty, the path must live under one of them.
-   Containment compares path segments, so `/home/u/srcevil` is not inside
-   `/home/u/src`.
+   Each entry is expanded like a `hostPath` — `{{.Name}}` with the instance
+   name, then `~`, then cleaned — at `create` and at `start --mount`; an entry
+   without a placeholder is a literal root. Containment compares path
+   segments, so `/home/u/srcevil` is not inside `/home/u/src`.
+
+   `allowedRoots: ["~/agentctl/work/{{.Name}}"]` means "an instance may mount
+   only the folder named after it": `pi-local01` may mount
+   `~/agentctl/work/pi-local01/…` and is refused `~/agentctl/work/pi-local02/`.
+   That beats listing each folder, because the list has to be kept in step
+   with the instances and still lets every listed instance mount every other
+   one's folder. A refusal names the expanded root, not the template.
 9. `guestPath` defaults to the host path (Lima's own behavior), must be
    absolute, and may not shadow `/`, `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`,
    `/boot`, `/dev`, `/proc`, `/sys`, `/var` or `/root`.

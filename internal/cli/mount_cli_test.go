@@ -177,6 +177,83 @@ func TestCLI_StartRejectsMountOutsideAllowedRoots(t *testing.T) {
 	}
 }
 
+// writeOwnFolderProfile writes a profile whose only allowed root is the
+// folder named after the instance, under parent, and returns the profile
+// directory to pass as --profile-dir.
+func writeOwnFolderProfile(t *testing.T, parent string) string {
+	t.Helper()
+	dir := t.TempDir()
+	yaml := `apiVersion: agentctl.dev/v1
+kind: Profile
+metadata:
+  name: own
+spec:
+  mountPolicy:
+    allowedRoots: ["` + filepath.Join(parent, "{{.Name}}") + `"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "own.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatalf("writing profile: %v", err)
+	}
+	return dir
+}
+
+// "{{.Name}}" in allowedRoots confines each instance created from one
+// profile to its own folder: demo may mount demo/, never other/.
+func TestCLI_CreateConfinesMountToInstanceFolder(t *testing.T) {
+	useIsolatedConfig(t)
+	useIsolatedHome(t)
+	parent := t.TempDir()
+	own := mustMkdir(t, filepath.Join(parent, "demo", "src"))
+	sibling := mustMkdir(t, filepath.Join(parent, "other", "src"))
+	profileDir := writeOwnFolderProfile(t, parent)
+
+	out, err := execute(t, fake.New(), "create", "demo", "--image=ubuntu", "--profile-dir", profileDir, "--profile=own", "--mount", sibling+":/workspace")
+	if err == nil {
+		t.Fatalf("create = nil error for a sibling instance's folder, want a failure (%s)", out)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(parent, "demo")) || strings.Contains(err.Error(), "{{") {
+		t.Errorf("error = %v, want it to show the expanded root %s", err, filepath.Join(parent, "demo"))
+	}
+
+	p := fake.New()
+	if out, err := execute(t, p, "create", "demo", "--image=ubuntu", "--profile-dir", profileDir, "--profile=own", "--mount", own+":/workspace"); err != nil {
+		t.Fatalf("create with own folder: %v (%s)", err, out)
+	}
+	inst, err := p.Status(t.Context(), "demo")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(inst.Mounts) != 1 || inst.Mounts[0].HostPath != own {
+		t.Errorf("instance mounts = %+v, want exactly %s", inst.Mounts, own)
+	}
+}
+
+func TestCLI_StartConfinesMountToInstanceFolder(t *testing.T) {
+	useIsolatedConfig(t)
+	useIsolatedHome(t)
+	parent := t.TempDir()
+	own := mustMkdir(t, filepath.Join(parent, "work", "src"))
+	sibling := mustMkdir(t, filepath.Join(parent, "other", "src"))
+	profileDir := writeOwnFolderProfile(t, parent)
+	p := fake.New()
+
+	if _, err := execute(t, p, "create", "work", "--image=ubuntu", "--mount-none"); err != nil {
+		t.Fatal("create failed")
+	}
+	out, err := execute(t, p, "start", "work", "--profile-dir", profileDir, "--profile=own", "--mount", sibling+":/workspace")
+	if err == nil {
+		t.Fatalf("start = nil error for a sibling instance's folder, want a failure (%s)", out)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(parent, "work")) || strings.Contains(err.Error(), "{{") {
+		t.Errorf("error = %v, want it to show the expanded root %s", err, filepath.Join(parent, "work"))
+	}
+
+	if out, err := execute(t, p, "start", "work", "--profile-dir", profileDir, "--profile=own", "--mount", own+":/workspace"); err != nil {
+		t.Fatalf("start with own folder: %v (%s)", err, out)
+	}
+	assertSingleMount(t, p, own)
+}
+
 // A backend that can't mount at all must block rather than silently
 // creating a sandbox without the directory the user asked for.
 func TestCLI_CreateBlocksWhenMountUnsupported(t *testing.T) {

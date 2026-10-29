@@ -237,11 +237,17 @@ func checkAllowedRoots(canonical, instanceName, home string, homeErr error, poli
 	if len(policy.AllowedRoots) == 0 {
 		return nil
 	}
+	// Each entry is expanded exactly like a hostPath, so "{{.Name}}" confines
+	// an instance to the folder named after it. The refusal lists the
+	// expanded roots: the template alone doesn't tell the operator which
+	// folder this instance was actually allowed.
+	shown := make([]string, 0, len(policy.AllowedRoots))
 	for _, root := range policy.AllowedRoots {
 		expanded, err := expandHostPath(root, instanceName, home, homeErr)
 		if err != nil {
 			return fmt.Errorf("mountPolicy.allowedRoots entry %q: %w", root, err)
 		}
+		shown = append(shown, expanded)
 		// A root may legitimately not exist yet (the workspaces directory
 		// before first use), so fall back to the lexical path rather than
 		// failing the whole resolve.
@@ -252,7 +258,7 @@ func checkAllowedRoots(canonical, instanceName, home string, homeErr error, poli
 			return nil
 		}
 	}
-	return fmt.Errorf("%s is outside every mountPolicy.allowedRoots entry (%s)", canonical, strings.Join(policy.AllowedRoots, ", "))
+	return fmt.Errorf("%s is outside every mountPolicy.allowedRoots entry (%s)", canonical, strings.Join(shown, ", "))
 }
 
 // within reports whether p is root or lives underneath it. It compares
