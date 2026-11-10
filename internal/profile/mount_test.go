@@ -3,17 +3,20 @@ package profile
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 // withHome points os.UserHomeDir at a temporary directory so the
 // home-relative rules (the $HOME denial, alwaysDenied, "~" expansion) can
-// be exercised without touching the developer's real home.
+// be exercised without touching the developer's real home. Windows reads
+// USERPROFILE instead of HOME, so both are set.
 func withHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	return home
 }
 
@@ -170,6 +173,43 @@ func TestResolveMounts_HomeDirectory(t *testing.T) {
 	}
 }
 
+// On Windows, gcloud, GnuPG and Windows Credential Manager keep their
+// secrets under %APPDATA% and %LOCALAPPDATA%, not in the dot-folders
+// alwaysDenied lists, and folder redirection can put those anywhere.
+func TestResolveMounts_WindowsCredentialStoresDenied(t *testing.T) {
+	withHome(t)
+	saved := hostOS
+	hostOS = "windows"
+	t.Cleanup(func() { hostOS = saved })
+	roaming := filepath.Join(t.TempDir(), "Roaming")
+	local := filepath.Join(t.TempDir(), "Local")
+	t.Setenv("APPDATA", roaming)
+	t.Setenv("LOCALAPPDATA", local)
+
+	for _, dir := range []string{
+		filepath.Join(roaming, "gcloud"),
+		filepath.Join(roaming, "gnupg", "private-keys-v1.d"),
+		filepath.Join(roaming, "Microsoft", "Credentials"),
+		filepath.Join(roaming, "Microsoft", "Protect"),
+		filepath.Join(local, "Microsoft", "Credentials"),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if _, err := ResolveMounts([]Mount{{HostPath: dir, GuestPath: "/mnt"}}, "demo", MountPolicy{AllowHome: allow(true)}); err == nil {
+			t.Errorf("ResolveMounts mounted %s, want it always denied", dir)
+		}
+	}
+
+	other := filepath.Join(roaming, "Code")
+	if err := os.MkdirAll(other, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if _, err := ResolveMounts([]Mount{{HostPath: other, GuestPath: "/mnt"}}, "demo", MountPolicy{}); err != nil {
+		t.Errorf("ResolveMounts rejected %s, which holds no credentials: %v", other, err)
+	}
+}
+
 // alwaysDenied exists so a profile author cannot forget these. The
 // provider-state entries matter most: write access to ~/.lima or Incus's
 // own state lets an agent rewrite the next sandbox's configuration.
@@ -213,12 +253,36 @@ func TestResolveMounts_GuestPathDefaultsToHostPath(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	got, err := ResolveMounts([]Mount{{HostPath: src}}, "demo", MountPolicy{})
+	if runtime.GOOS == "windows" {
+		// No default on Windows; see TestResolveGuestPath_WindowsHostPath.
+		if err == nil {
+			t.Fatalf("ResolveMounts defaulted the guest path to %q, want an error asking for one", got[0].GuestPath)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("ResolveMounts: %v", err)
 	}
 	want, _ := filepath.EvalSymlinks(src)
 	if got[0].GuestPath != filepath.ToSlash(want) {
 		t.Errorf("GuestPath = %q, want it defaulted to the host path %q", got[0].GuestPath, want)
+	}
+}
+
+// A Windows host path has no guest-side form, so with no guest path given
+// the refusal has to ask for one, not complain that a path the user never
+// typed isn't absolute.
+func TestResolveGuestPath_WindowsHostPath(t *testing.T) {
+	_, err := resolveGuestPath("", `C:\Users\me\src`)
+	if err == nil {
+		t.Fatal("resolveGuestPath defaulted a Windows host path into a guest path, want an error")
+	}
+	if !strings.Contains(err.Error(), `--mount C:\Users\me\src:/workspace`) {
+		t.Errorf("error = %v, want it to show how to give a guest path", err)
+	}
+
+	if got, err := resolveGuestPath("/workspace", `C:\Users\me\src`); err != nil || got != "/workspace" {
+		t.Errorf("resolveGuestPath with an explicit guest path = %q, %v; want /workspace", got, err)
 	}
 }
 
@@ -326,6 +390,20 @@ func TestResolveMounts_RejectsFilesystemRoot(t *testing.T) {
 	withHome(t)
 	if _, err := ResolveMounts([]Mount{{HostPath: "/", GuestPath: "/host"}}, "demo", MountPolicy{}); err == nil {
 		t.Error("ResolveMounts accepted / as a host path, want an error")
+	}
+}
+
+// On Windows "/" above is only the current drive's root; every other
+// drive's root has to be refused too.
+func TestResolveMounts_RejectsDriveRoot(t *testing.T) {
+	withHome(t)
+	volume := filepath.VolumeName(t.TempDir())
+	if volume == "" {
+		t.Skip("drive roots exist only on Windows; / is covered above")
+	}
+	root := volume + `\`
+	if _, err := ResolveMounts([]Mount{{HostPath: root, GuestPath: "/host"}}, "demo", MountPolicy{}); err == nil {
+		t.Errorf("ResolveMounts accepted the drive root %s as a host path, want an error", root)
 	}
 }
 
