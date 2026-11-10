@@ -226,6 +226,13 @@ func checkDenied(canonical, home string, homeErr error, policy MountPolicy) erro
 		if err != nil {
 			return fmt.Errorf("mountPolicy.denyPaths entry %q: %w", deny, err)
 		}
+		// Compare canonical with canonical: the mount has had its symlinks
+		// (and, on Windows, 8.3 short names) resolved, so an entry written
+		// through a symlink would otherwise never match it. An entry that
+		// doesn't exist has nothing beneath it to mount, so it stays lexical.
+		if resolved, err := filepath.EvalSymlinks(expanded); err == nil {
+			expanded = resolved
+		}
 		if within(canonical, expanded) {
 			return fmt.Errorf("%s is denied by mountPolicy.denyPaths entry %q", canonical, deny)
 		}

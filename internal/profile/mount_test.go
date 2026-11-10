@@ -206,6 +206,30 @@ func TestResolveMounts_DenyPaths(t *testing.T) {
 	}
 }
 
+// The mount is canonicalized, so a denyPaths entry has to be too: written
+// through a symlink (or, on Windows, an 8.3 short name), it would otherwise
+// never match the directory it names.
+func TestResolveMounts_DenyPathThroughSymlink(t *testing.T) {
+	withHome(t)
+	real := t.TempDir()
+	secrets := filepath.Join(real, "secrets")
+	if err := os.MkdirAll(secrets, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := ResolveMounts(
+		[]Mount{{HostPath: secrets, GuestPath: "/workspace"}}, "demo",
+		MountPolicy{DenyPaths: []string{filepath.Join(link, "secrets")}},
+	)
+	if err == nil {
+		t.Fatal("ResolveMounts ignored a denyPaths entry written through a symlink, want an error")
+	}
+}
+
 func TestResolveMounts_GuestPathDefaultsToHostPath(t *testing.T) {
 	home := withHome(t)
 	src := filepath.Join(home, "src")
