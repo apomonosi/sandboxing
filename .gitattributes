@@ -1,0 +1,5 @@
+# Shell scripts run inside the Linux guest under /bin/sh, several of them
+# compiled into agentctl with go:embed. A Windows checkout with
+# core.autocrlf would give them CRLF endings, which /bin/sh reads as a
+# stray \r on every line, so keep them LF on every checkout.
+*.sh text eol=lf
